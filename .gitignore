@@ -41,6 +41,12 @@ Thumbs.db
 # Project artifacts
 results/
 
+# Large model files (downloaded at runtime)
+models/**
+!models/
+!models/.gitkeep
+!models/README.md
+
 # Logs
 *.log
 

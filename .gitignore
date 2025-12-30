@@ -54,4 +54,5 @@ models/**
 .env
 .env.*
 
-./results/*
+results/*
+data/*

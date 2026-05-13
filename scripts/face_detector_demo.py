@@ -22,8 +22,8 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import cv2
 
@@ -113,7 +113,7 @@ def _build_detector(args: argparse.Namespace) -> FaceDetectorDNN | FaceDetectorD
             except Exception as exc:
                 raise SystemExit(
                     f"--require-cuda set but TensorFlow GPU unavailable: {exc}"
-                )
+                ) from exc
             if not gpus:
                 raise SystemExit(
                     "--require-cuda set but TensorFlow reports no GPU devices"

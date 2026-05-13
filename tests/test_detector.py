@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -134,8 +134,8 @@ class TestExtractFacesCrops:
         for face_img, (x, y, w, h), conf in extracted:
             assert face_img.ndim == 3
             assert face_img.shape[2] == 3
-            assert 0 <= x
-            assert 0 <= y
+            assert x >= 0
+            assert y >= 0
             assert w >= 0
             assert h >= 0
             assert 0.0 <= float(conf) <= 1.0

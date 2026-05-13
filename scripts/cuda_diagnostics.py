@@ -8,7 +8,8 @@ Reports:
 Run::
 
     python scripts/cuda_diagnostics.py
-    python scripts/cuda_diagnostics.py --image images/bub_der_personalausweis_kopie.jpg --rounds 20
+    python scripts/cuda_diagnostics.py \
+        --image images/bub_der_personalausweis_kopie.jpg --rounds 20
     python scripts/cuda_diagnostics.py --check-tensorflow
 """
 
@@ -16,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import statistics
-import sys
 import time
 from pathlib import Path
 
@@ -125,7 +125,7 @@ def report_tensorflow_gpu() -> None:
 
 
 def _load_or_generate_image(image_path: Path | None) -> np.ndarray:
-    """Load a real image or generate a synthetic 640×480 test image."""
+    """Load a real image or generate a synthetic 640x480 test image."""
     if image_path and image_path.exists():
         img = cv2.imread(str(image_path))
         if img is not None:
@@ -259,7 +259,7 @@ def main() -> None:
         "--image",
         type=Path,
         default=None,
-        help="Image to benchmark (default: synthetic 640×480)",
+        help="Image to benchmark (default: synthetic 640x480)",
     )
     parser.add_argument(
         "--rounds",
@@ -302,7 +302,8 @@ def main() -> None:
     if not has_cuda_build:
         print("\n  ⚠ OpenCV was built without CUDA. To use GPU acceleration,")
         print(
-            "    rebuild OpenCV with -DWITH_CUDA=ON or install opencv-contrib-python-cuda."
+            "    rebuild OpenCV with -DWITH_CUDA=ON "
+            "or install opencv-contrib-python-cuda."
         )
 
     # --- Benchmark ---
@@ -312,7 +313,7 @@ def main() -> None:
 
     image = _load_or_generate_image(args.image)
     print(
-        f"\n  Benchmark image: {image.shape[1]}×{image.shape[0]} "
+        f"\n  Benchmark image: {image.shape[1]}x{image.shape[0]} "
         f"({'file' if args.image else 'synthetic'})"
     )
 

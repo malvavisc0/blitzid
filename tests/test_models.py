@@ -6,7 +6,6 @@ Uses mocking to avoid actual downloads and CUDA requirements.
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -49,12 +48,14 @@ class TestModelManager:
         import urllib.error
 
         mgr = ModelManager(tmp_path, logger, allow_downloads=True)
-        with patch(
-            "blitzid._models.urllib.request.urlopen",
-            side_effect=urllib.error.URLError("network error"),
+        with (
+            patch(
+                "blitzid._models.urllib.request.urlopen",
+                side_effect=urllib.error.URLError("network error"),
+            ),
+            pytest.raises(ModelError, match="Error downloading"),
         ):
-            with pytest.raises(ModelError, match="Error downloading"):
-                mgr._download_models()
+            mgr._download_models()
 
         # Verify no .tmp files remain
         tmp_files = list(tmp_path.glob("*.tmp"))
@@ -77,7 +78,7 @@ class TestModelManager:
             mock_net = MagicMock()
             mock_read.return_value = mock_net
 
-            net, backend = mgr.load_network(use_cuda=True, require_cuda=False)
+            _net, backend = mgr.load_network(use_cuda=True, require_cuda=False)
             assert backend == "CPU"
 
     def test_require_cuda_raises(self, tmp_path: Path) -> None:
@@ -108,7 +109,7 @@ class TestModelManager:
 
         with patch("cv2.dnn.readNetFromCaffe") as mock_read:
             mock_read.return_value = MagicMock()
-            net, backend = mgr.load_network(use_cuda=False)
+            _net, backend = mgr.load_network(use_cuda=False)
             assert backend == "CPU"
 
 

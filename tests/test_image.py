@@ -6,7 +6,6 @@ All tests are pure-function / fast, no model or GPU required.
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 
 import numpy as np

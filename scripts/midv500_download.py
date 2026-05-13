@@ -4,8 +4,8 @@ import argparse
 import json
 import os
 import zipfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 from urllib.request import urlretrieve
 
 from tqdm import tqdm
@@ -75,7 +75,7 @@ def list_annotation_paths_recursively(
                 continue
 
             try:
-                with open(abs_filepath, "r", encoding="utf-8") as json_file:
+                with open(abs_filepath, encoding="utf-8") as json_file:
                     quad = json.load(json_file)
                 coords = quad["quad"]
             except (OSError, json.JSONDecodeError, KeyError, TypeError):

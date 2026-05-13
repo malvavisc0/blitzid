@@ -1,0 +1,83 @@
+[project]
+name = "blitzid"
+version = "0.1.0"
+description = "Modular DNN-based face detection framework with optional CUDA acceleration"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "Malvavisc0" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+
+# ── Core dependencies (always installed) ───────────────────
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "platformdirs",
+]
+
+# ── Optional dependency groups ─────────────────────────────
+[project.optional-dependencies]
+deepface = [
+    "deepface",
+]
+scripts = [
+    "tqdm",
+]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
+all = [
+    "blitzid[deepface,scripts,dev]",
+]
+
+# ── Build system ───────────────────────────────────────────
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/blitzid"]
+
+# ── Project URLs ───────────────────────────────────────────
+[project.urls]
+Homepage = "https://github.com/malvavisc0/blitzid"
+Repository = "https://github.com/malvavisc0/blitzid"
+Issues = "https://github.com/malvavisc0/blitzid/issues"
+
+# ── Tool configs ───────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["blitzid"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

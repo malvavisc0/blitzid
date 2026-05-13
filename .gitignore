@@ -56,3 +56,6 @@ models/**
 
 results/*
 data/*
+
+# uv
+uv.lock

@@ -1,0 +1,162 @@
+"""Smoke tests for the blitzid face detection package.
+
+Validates:
+- importability and basic construction
+- deterministic default ``model_dir``
+- bbox validity invariants (non-negative, within image bounds)
+- cache hit behaviour and metrics timing semantics
+- optional DeepFace backend (skipped when not installed)
+
+Run::
+
+    uv run pytest tests/ -v
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from blitzid import FaceDetectorDeepFace, FaceDetectorDNN, OptionalDependencyError
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# After the simplification the default model_dir always uses platformdirs
+# (i.e. ~/.cache/blitzid/models), never <repo_root>/models.
+try:
+    from platformdirs import user_cache_dir  # type: ignore[import-untyped]
+
+    EXPECTED_MODEL_DIR = (Path(user_cache_dir("blitzid")) / "models").resolve()
+except ImportError:
+    EXPECTED_MODEL_DIR = (Path.home() / ".cache" / "blitzid" / "models").resolve()
+
+SYNTHETIC_IMAGE = np.zeros((480, 640, 3), dtype=np.uint8)
+
+
+# ── Helpers ────────────────────────────────────────────────
+
+
+def _assert_bbox_valid(
+    faces: list[tuple[int, int, int, int, float]],
+    image_size: tuple[int, int],
+) -> None:
+    img_w, img_h = image_size
+    for x, y, w, h, conf in faces:
+        assert isinstance(x, int) and isinstance(y, int)
+        assert isinstance(w, int) and isinstance(h, int)
+        assert 0 <= x < img_w, (x, img_w)
+        assert 0 <= y < img_h, (y, img_h)
+        assert w > 0 and h > 0, (w, h)
+        assert x + w <= img_w, (x, w, img_w)
+        assert y + h <= img_h, (y, h, img_h)
+        assert 0.0 <= float(conf) <= 1.0, conf
+
+
+# ── Fixtures ───────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def detector() -> FaceDetectorDNN:
+    """Shared detector instance for the module (avoids re-loading the model)."""
+    return FaceDetectorDNN(
+        confidence_threshold=0.5,
+        enable_cache=True,
+        max_cache_size=16,
+    )
+
+
+# ── Tests ──────────────────────────────────────────────────
+
+
+def test_construction(detector: FaceDetectorDNN) -> None:
+    """Detector can be constructed and reports a backend type."""
+    assert detector.backend_type is not None
+
+
+def test_deterministic_model_dir(detector: FaceDetectorDNN) -> None:
+    """Default model_dir resolves to ``<repo_root>/models``."""
+    actual = detector.model_manager.model_dir.resolve()
+    assert actual == EXPECTED_MODEL_DIR, (
+        f"Expected model_dir={EXPECTED_MODEL_DIR}, got {actual}"
+    )
+
+
+def test_synthetic_image_detection(detector: FaceDetectorDNN) -> None:
+    """Detecting on a blank image returns valid (possibly empty) bboxes."""
+    faces = detector.detect_face(SYNTHETIC_IMAGE)
+    _assert_bbox_valid(faces, (SYNTHETIC_IMAGE.shape[1], SYNTHETIC_IMAGE.shape[0]))
+
+
+def test_cache_and_metrics(detector: FaceDetectorDNN) -> None:
+    """Second call on the same image is a cache hit with zero processing time."""
+    detector.clear_cache()
+
+    r1 = detector.detect_face_with_metrics(SYNTHETIC_IMAGE)
+    assert r1.cache_hit is False
+
+    r2 = detector.detect_face_with_metrics(SYNTHETIC_IMAGE)
+    assert r2.cache_hit is True
+    assert r2.processing_time == 0.0
+
+
+def test_path_input(detector: FaceDetectorDNN) -> None:
+    """Detection works when given a file path (requires repo image)."""
+    image_path = REPO_ROOT / "images" / "bub_der_personalausweis_kopie.jpg"
+    if not image_path.exists():
+        pytest.skip(f"missing test image: {image_path}")
+
+    import cv2
+
+    raw = cv2.imread(str(image_path))
+    assert raw is not None
+    img_h, img_w = raw.shape[:2]
+
+    faces = detector.detect_face(image_path)
+    _assert_bbox_valid(faces, (img_w, img_h))
+
+
+def test_deepface_backend_extract() -> None:
+    """DeepFace backend can extract faces from a synthetic image (or skip)."""
+    try:
+        deep = FaceDetectorDeepFace(log_level=50)
+    except OptionalDependencyError:
+        pytest.skip("DeepFace not installed")
+
+    extracted = deep.extract_faces(SYNTHETIC_IMAGE)
+    assert isinstance(extracted, list)
+    for face_img, (_x, _y, w, h), conf in extracted:
+        assert face_img.ndim == 3 and face_img.shape[2] == 3
+        assert w >= 0 and h >= 0
+        assert 0.0 <= float(conf) <= 1.0
+
+
+def test_deepface_analyze() -> None:
+    """DeepFace analyze returns age/gender/race/emotion keys (or skip)."""
+    try:
+        deep = FaceDetectorDeepFace(log_level=50)
+    except OptionalDependencyError:
+        pytest.skip("DeepFace not installed")
+
+    image_path = REPO_ROOT / "images" / "bub_der_personalausweis_kopie.jpg"
+    if not image_path.exists():
+        pytest.skip(f"missing test image: {image_path}")
+
+    extracted = deep.extract_faces(image_path)
+    if not extracted:
+        pytest.skip("no face detected in test image")
+
+    face0, _bbox0, _conf0 = extracted[0]
+    attrs = deep.analyze(face0, actions=["age", "gender", "race", "emotion"])
+
+    # DeepFace may return either a dict or a list[dict].
+    if isinstance(attrs, list):
+        assert attrs, "DeepFace.analyze returned an empty list"
+        attrs0 = attrs[0]
+    else:
+        attrs0 = attrs
+
+    assert isinstance(attrs0, dict)
+    for key in ("age", "gender", "race", "emotion"):
+        assert key in attrs0, f"missing key: {key}"

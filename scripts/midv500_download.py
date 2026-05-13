@@ -27,7 +27,9 @@ def calculate_intersect_area(bbox1: list[float], bbox2: list[float]) -> float:
     return inter_w * inter_h
 
 
-def get_bbox_inside_image(label_bbox: list[float], image_bbox: list[float]) -> list[float]:
+def get_bbox_inside_image(
+    label_bbox: list[float], image_bbox: list[float]
+) -> list[float]:
     """Clamp `label_bbox` so it lies inside `image_bbox`.
 
     Returns `[xmin, ymin, xmax, ymax]`.

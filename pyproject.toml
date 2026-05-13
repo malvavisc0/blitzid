@@ -27,6 +27,7 @@ dependencies = [
 [project.optional-dependencies]
 deepface = [
     "deepface",
+    "tf-keras",
 ]
 scripts = [
     "tqdm",

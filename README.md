@@ -116,6 +116,57 @@ graph TD
     C --> B
 ```
 
+## CUDA / GPU Acceleration
+
+BlitzID's `FaceDetectorDNN` transparently offloads inference to the GPU when OpenCV is built with CUDA support. Run `python scripts/cuda_diagnostics.py` to check your current setup.
+
+### Prerequisites
+
+1. **NVIDIA GPU driver** — install via your distro's package manager or from [nvidia.com](https://www.nvidia.com/drivers)
+2. **CUDA Toolkit** (≥ 11.8) — [developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads)
+3. **cuDNN** (matching your CUDA version) — [developer.nvidia.com/cudnn](https://developer.nvidia.com/cudnn)
+
+### Option A: Build OpenCV from source (recommended)
+
+```bash
+# Install build deps (Ubuntu/Debian)
+sudo apt install build-essential cmake git pkg-config \
+    libgtk-3-dev libavcodec-dev libavformat-dev libswscale-dev
+
+# Clone & build
+git clone https://github.com/opencv/opencv.git && cd opencv
+mkdir build && cd build
+cmake -D CMAKE_BUILD_TYPE=RELEASE \
+      -D WITH_CUDA=ON \
+      -D CUDA_ARCH_BIN="7.5,8.6,8.9,9.0" \
+      -D WITH_CUDNN=ON \
+      -D OPENCV_DNN_CUDA=ON \
+      -D BUILD_opencv_python3=ON ..
+make -j$(nproc) && sudo make install
+```
+
+> **Tip:** Adjust `CUDA_ARCH_BIN` to your GPU's compute capability ([lookup table](https://developer.nvidia.com/cuda-gpus)).
+
+### Option B: Pre-built CUDA wheel (experimental)
+
+Community-maintained CUDA-enabled wheels are available but not on the official PyPI:
+
+```bash
+# Example (check for your CUDA version)
+pip install opencv-contrib-python-cuda
+```
+
+### Verification
+
+After installation, re-run the diagnostics to confirm:
+
+```bash
+python scripts/cuda_diagnostics.py --rounds 20 \
+    --image images/bub_der_personalausweis_kopie.jpg
+```
+
+You should see `OpenCV CUDA build: Yes` and a CUDA benchmark section alongside the CPU results.
+
 ## Development
 
 ```bash
@@ -144,6 +195,21 @@ python scripts/face_detector_demo.py --preset balanced --run all \
 # DeepFace backend
 python scripts/face_detector_demo.py --preset deepface --run basic,extract \
     --image images/bub_der_personalausweis_kopie.jpg
+```
+
+### CUDA Diagnostics
+
+[`scripts/cuda_diagnostics.py`](scripts/cuda_diagnostics.py) reports OpenCV CUDA build flags, available GPU devices, and runs a CPU-vs-GPU face detection benchmark:
+
+```bash
+# Basic diagnostics
+python scripts/cuda_diagnostics.py
+
+# Custom image and benchmark rounds
+python scripts/cuda_diagnostics.py --image images/bub_der_personalausweis_kopie.jpg --rounds 20
+
+# Also check TensorFlow GPU visibility
+python scripts/cuda_diagnostics.py --check-tensorflow
 ```
 
 ## License

@@ -2,18 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel
-
-AnalysisType = Literal["face", "ocr", "mrz"]
-
-
-class JobPayload(BaseModel):
-    """Stored job payload: the uploaded image plus requested analyses."""
-
-    image_b64: str
-    types: list[AnalysisType]
 
 
 class JobCreated(BaseModel):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -17,7 +16,6 @@ from ..face._face import Face
 from ..face.detector import FaceDetectorDNN
 from ..reading.mrz import MRZReader
 from ..reading.ocr import RapidOCRReader
-from ._schemas import JobPayload
 from ._upload import decode_image_bytes, encode_jpeg_b64
 
 FACE_CROP_PADDING = 0.2
@@ -40,7 +38,7 @@ class Engines:
     ocr_lock: Lock = field(default_factory=Lock)
 
 
-def run_job(payload: JobPayload, engines: Engines) -> dict[str, Any]:
+def run_job(image: bytes, types: list[str], engines: Engines) -> dict[str, Any]:
     """Run the requested analyses and build the result dict.
 
     Per-section failures (``BlitzIDError`` subclasses) are captured as
@@ -50,11 +48,11 @@ def run_job(payload: JobPayload, engines: Engines) -> dict[str, Any]:
         ``{"state": "done", "<type>": <section>, ...}`` — duplicates
         deduped, one section per requested type.
     """
-    img = decode_image_bytes(base64.b64decode(payload.image_b64))
+    img = decode_image_bytes(image)
     if img is None or min(img.shape[:2]) < MIN_DIMENSION:
         return {"state": "failed", "error": "stored image bytes are undecodable"}
     sections: dict[str, Any] = {"state": "done"}
-    for analysis_type in dict.fromkeys(payload.types):
+    for analysis_type in dict.fromkeys(types):
         sections[analysis_type] = _run_section(analysis_type, img, engines)
     return sections
 

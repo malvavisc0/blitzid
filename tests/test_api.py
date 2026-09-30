@@ -12,14 +12,16 @@ import base64
 import logging
 import os
 import time
+import uuid
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
+from threading import Barrier, Event, Thread
 from typing import Any
 
 import cv2
 import numpy as np
 import pytest
-from test_document import _synthetic_document
 
 from blitzid import (
     Face,
@@ -38,39 +40,48 @@ import redis
 from fastapi.testclient import TestClient
 
 from blitzid.api._analyze import Engines
-from blitzid.api._app import create_app
+from blitzid.api._app import ApiConfig, _JobCancelled, _Workers, create_app
 from blitzid.api._jobs import (
     CLAIM_PREFIX,
-    PAYLOAD_PREFIX,
+    JOB_PREFIX,
+    PROCESSING_KEY,
     QUEUE_KEY,
+    ClaimedJob,
     JobSnapshot,
     QueueFullError,
     RedisJobStore,
+    StaleClaimError,
 )
 
 
-def _image_bytes(img: np.ndarray, ext: str = ".png") -> bytes:
-    ok, buffer = cv2.imencode(ext, img)
-    assert ok
-    return buffer.tobytes()
-
-
-def _tiny_image_bytes() -> bytes:
-    return _image_bytes(np.zeros((60, 80, 3), dtype=np.uint8))
+def _now() -> float:
+    """Monotonic-ish clock the fake can be wound forward with."""
+    return time.monotonic()
 
 
 class MemoryJobStore:
-    """RedisJobStore-shaped in-process fake (same interface)."""
+    """RedisJobStore-shaped in-process fake (same interface).
 
-    def __init__(self, max_queued: int = 50) -> None:
+    Mirrors the real store's lease and registry semantics: claims are
+    token-owned with expiry timestamps (wound forward via
+    :meth:`expire_all_claims`), results are claim-once, and the
+    submission registry prunes to a 2x-TTL grace window so expired ids
+    become ``missing`` (404), not ``gone`` (410), after the window.
+    """
+
+    def __init__(
+        self, max_queued: int = 50, ttl_seconds: int = 900, lease_seconds: int = 120
+    ) -> None:
         self._queue: deque[str] = deque()
         self._processing: list[str] = []
-        self._payloads: dict[str, dict[str, Any]] = {}
+        self._jobs: dict[str, tuple[bytes, list[str]]] = {}
         self._status: dict[str, str] = {}
         self._results: dict[str, dict[str, Any]] = {}
-        self._claims: set[str] = set()
-        self._submitted: set[str] = set()
+        self._claims: dict[str, tuple[str, float]] = {}
+        self._submitted: dict[str, float] = {}
         self._max_queued = max_queued
+        self._ttl = ttl_seconds
+        self._lease = lease_seconds
 
     def ping(self) -> bool:
         return True
@@ -82,35 +93,57 @@ class MemoryJobStore:
             "stored": len(self._results),
         }
 
-    def submit(self, job_id: str, payload: dict[str, Any]) -> None:
+    def expire_all_claims(self) -> None:
+        """Simulate every worker dying: drop all claim leases."""
+        self._claims.clear()
+
+    def submit(self, job_id: str, image: bytes, types: list[str]) -> None:
         if len(self._queue) >= self._max_queued:
             raise QueueFullError(f"queue is full ({self._max_queued} queued jobs)")
-        self._payloads[job_id] = payload
+        self._prune_registry()
+        self._jobs[job_id] = (image, types)
         self._status[job_id] = "queued"
         self._queue.appendleft(job_id)
-        self._submitted.add(job_id)
+        self._submitted[job_id] = _now()
 
-    def claim(self) -> tuple[str, dict[str, Any]] | None:
+    def claim(self) -> ClaimedJob | None:
         while self._queue:
             job_id = self._queue.pop()
-            payload = self._payloads.get(job_id)
-            if payload is not None:
+            job = self._jobs.get(job_id)
+            if job is not None:
                 break
         else:
             return None
+        token = uuid.uuid4().hex
+        if job_id in self._claims:
+            # requeued by the sweeper mid-claim: leave it queued
+            self._processing.remove(job_id)
+            return None
         self._processing.append(job_id)
         self._status[job_id] = "running"
-        self._claims.add(job_id)
-        return job_id, payload
+        self._claims[job_id] = (token, _now() + self._lease)
+        return ClaimedJob(job_id=job_id, image=job[0], types=job[1], token=token)
 
-    def write_result(self, job_id: str, result: dict[str, Any]) -> None:
+    def renew(self, job_id: str, token: str) -> bool:
+        claim = self._claims.get(job_id)
+        if claim is None or claim[0] != token or claim[1] <= _now():
+            return False
+        self._claims[job_id] = (token, _now() + self._lease)
+        return True
+
+    def write_result(self, job_id: str, token: str, result: dict[str, Any]) -> None:
+        claim = self._claims.get(job_id)
+        if claim is None or claim[0] != token:
+            raise StaleClaimError(f"claim on job {job_id} was lost")
         self._results[job_id] = result
         if job_id in self._processing:
             self._processing.remove(job_id)
-        self._claims.discard(job_id)
+        self._claims.pop(job_id, None)
+        self._jobs.pop(job_id, None)
         self._status.pop(job_id, None)
 
     def get(self, job_id: str) -> JobSnapshot:
+        self._prune_registry()
         result = self._results.pop(job_id, None)
         if result is not None:
             return JobSnapshot("done", result)
@@ -124,16 +157,28 @@ class MemoryJobStore:
     def sweep(self) -> int:
         requeued = 0
         for job_id in list(self._processing):
-            if job_id in self._claims:
+            claim = self._claims.get(job_id)
+            if claim is not None and claim[1] > _now():
                 continue
-            self._requeue(job_id)
-            requeued += 1
+            self._claims.pop(job_id, None)
+            if self._requeue(job_id):
+                requeued += 1
         return requeued
 
-    def _requeue(self, job_id: str) -> None:
+    def _requeue(self, job_id: str) -> bool:
+        if len(self._queue) >= self._max_queued:
+            return False
         self._processing.remove(job_id)
         self._queue.appendleft(job_id)
         self._status[job_id] = "queued"
+        return True
+
+    def _prune_registry(self) -> None:
+        """Drop submitted ids past the 2x-TTL grace window (404)."""
+        cutoff = _now() - 2 * self._ttl
+        for job_id, submitted_at in list(self._submitted.items()):
+            if submitted_at <= cutoff:
+                del self._submitted[job_id]
 
 
 class _StubDetector:
@@ -219,18 +264,25 @@ class _BrokenStore(MemoryJobStore):
     def ping(self) -> bool:
         return False
 
-    def submit(self, job_id: str, payload: dict[str, Any]) -> None:
+    def submit(self, job_id: str, image: bytes, types: list[str]) -> None:
         raise redis.ConnectionError("Redis is down")
+
+
+def _image_bytes(img: np.ndarray, ext: str = ".png") -> bytes:
+    ok, buffer = cv2.imencode(ext, img)
+    assert ok
+    return buffer.tobytes()
+
+
+def _tiny_image_bytes() -> bytes:
+    return _image_bytes(np.zeros((60, 80, 3), dtype=np.uint8))
 
 
 def _client(
     store: MemoryJobStore | RedisJobStore | None = None,
     engines: Engines | None = None,
 ) -> TestClient:
-    app = create_app(
-        store=store,  # type: ignore[arg-type]
-        engines=engines,
-    )
+    app = create_app(store=store, engines=engines)
     return TestClient(app)
 
 
@@ -378,13 +430,14 @@ class TestSubmitLifecycle:
         )
         with client:
             _submit(client)
-            job_id, _payload = store.claim()
-            store._redis.delete(CLAIM_PREFIX + job_id)
+            claimed = store.claim()
+            assert claimed is not None and claimed.job_id
+            store._redis.delete(CLAIM_PREFIX + claimed.job_id)
             assert store.sweep() == 1
-            snapshot = store.get(job_id)
+            snapshot = store.get(claimed.job_id)
             assert snapshot.status == "queued"
-            requeued_id, _payload = store.claim()
-            assert requeued_id == job_id
+            requeued = store.claim()
+            assert requeued is not None and requeued.job_id == claimed.job_id
 
     def test_lease_sweeper_keeps_live_claims(
         self, monkeypatch: pytest.MonkeyPatch
@@ -402,6 +455,96 @@ class TestSubmitLifecycle:
             _submit(client)
             store.claim()
             assert store.sweep() == 0
+
+    def test_running_job_lease_is_renewed(self) -> None:
+        """A heartbeat thread extends the claim while a job runs, so a
+        long analysis is not requeued as abandoned."""
+        renewed: list[str] = []
+
+        class _CountingStore(MemoryJobStore):
+            def renew(self, job_id: str, token: str) -> bool:
+                renewed.append(job_id)
+                return super().renew(job_id, token)
+
+        store = _CountingStore(lease_seconds=3)
+        config = ApiConfig(
+            redis_url="redis://localhost:6379/0",
+            max_upload_bytes=20 * 1024 * 1024,
+            ttl_seconds=900,
+            max_queued=50,
+            max_concurrent=0,
+            lease_seconds=3,
+        )
+        workers = _Workers(store, _stub_engines(), config)
+        store.submit("job", b"image", ["face"])
+        claimed = store.claim()
+        assert claimed is not None
+        with workers._lease_heartbeat(claimed, Event()):
+            time.sleep(2.0)
+        assert renewed.count("job") >= 1
+        # the lease survived past the original expiry
+        assert store.renew("job", claimed.token) is True
+
+    def test_worker_abandons_job_when_lease_is_lost(self) -> None:
+        """A worker whose renewal fails (lost claim) discards its
+        result instead of clobbering the re-claimed worker's."""
+        store = RedisJobStore(
+            fakeredis.FakeStrictRedis(),
+            ttl_seconds=900,
+            max_queued=50,
+            lease_seconds=120,
+        )
+        config = ApiConfig(
+            redis_url="redis://localhost:6379/0",
+            max_upload_bytes=20 * 1024 * 1024,
+            ttl_seconds=900,
+            max_queued=50,
+            max_concurrent=1,
+            lease_seconds=120,
+        )
+        engines = _stub_engines()
+        workers = _Workers(store, engines, config)
+        store.submit("job", _tiny_image_bytes(), ["face"])
+        claimed = store.claim()
+        assert claimed is not None
+        # a re-claimed worker took over the job mid-run
+        store._redis.set(CLAIM_PREFIX + "job", "other-token", ex=120)
+        with pytest.raises(StaleClaimError):
+            workers._store.write_result("job", claimed.token, {"state": "done"})
+        assert store._redis.get(CLAIM_PREFIX + "job") == b"other-token"
+
+    def test_execute_skips_result_write_when_cancelled(self) -> None:
+        """_execute on a job whose claim was lost writes no result —
+        the re-claimed worker owns the job."""
+
+        class _NoWriteStore(MemoryJobStore):
+            def write_result(
+                self, job_id: str, token: str, result: dict[str, Any]
+            ) -> None:
+                raise AssertionError("cancelled job must not write a result")
+
+        config = ApiConfig(
+            redis_url="redis://localhost:6379/0",
+            max_upload_bytes=20 * 1024 * 1024,
+            ttl_seconds=900,
+            max_queued=50,
+            max_concurrent=1,
+            lease_seconds=120,
+        )
+        store = _NoWriteStore()
+        workers = _Workers(store, _stub_engines(), config)
+        store.submit("job", _tiny_image_bytes(), ["face"])
+        claimed = store.claim()
+        assert claimed is not None
+
+        # the heartbeat lost the claim mid-run and raised the cancel
+        cancelled = Event()
+        cancelled.set()
+        with (
+            pytest.raises(_JobCancelled),
+            workers._lease_heartbeat(claimed, cancelled),
+        ):
+            pass
 
 
 class TestSubmitValidation:
@@ -483,10 +626,19 @@ class TestHealth:
     def test_degraded_without_engines_and_redis(self) -> None:
         engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
         with _client(store=_BrokenStore(), engines=engines) as client:
-            body = client.get("/health").json()
+            response = client.get("/health")
+            assert response.status_code == 503
+            body = response.json()
             assert body["status"] == "degraded"
             assert body["redis"] is False
             assert body["models"] == {"face": False, "ocr": False, "mrz": False}
+
+    def test_missing_engines_stay_200(self) -> None:
+        engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = client.get("/health")
+            assert response.status_code == 200
+            assert response.json()["status"] == "ok"
 
 
 class TestCrop:
@@ -495,10 +647,12 @@ class TestCrop:
         data = {"side": side} if side else None
         return client.post("/crop", files=files, data=data)
 
-    def test_document_crop_passes(self) -> None:
+    def test_document_crop_passes(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         engines = _stub_engines()
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            response = self._crop(client, _synthetic_document(), side="front")
+            response = self._crop(client, synthetic_document(), side="front")
             assert response.status_code == 200
             body = response.json()
             assert body["verdict"] == "pass"
@@ -518,35 +672,45 @@ class TestCrop:
             assert body["quad"] is None
             assert body["crop_base64"] is None
 
-    def test_back_side_face_not_expected(self) -> None:
+    def test_back_side_face_not_expected(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         engines = _stub_engines(faces=[])
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            response = self._crop(client, _synthetic_document(), side="back")
+            response = self._crop(client, synthetic_document(), side="back")
             assert response.status_code == 200
             body = response.json()
             assert body["checks"]["face_present"] == "n/a"
             assert body["verdict"] == "pass"
 
-    def test_front_without_face_warns_not_rejects(self) -> None:
+    def test_front_without_face_warns_not_rejects(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         engines = _stub_engines(faces=[])
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            response = self._crop(client, _synthetic_document(), side="front")
+            response = self._crop(client, synthetic_document(), side="front")
             body = response.json()
             assert body["checks"]["face_present"] == "warn"
             assert body["verdict"] == "warn"
 
-    def test_invalid_side_422(self) -> None:
+    def test_invalid_side_422(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         with _client(store=MemoryJobStore()) as client:
-            response = self._crop(client, _synthetic_document(), side="left")
+            response = self._crop(client, synthetic_document(), side="left")
             assert response.status_code == 422
 
-    def test_oversized_413(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_oversized_413(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        synthetic_document: Callable[..., np.ndarray],
+    ) -> None:
         with _env_client(
             monkeypatch,
             store=MemoryJobStore(),
             BLITZID_API_MAX_UPLOAD_MB="1",
         ) as client:
-            response = self._crop(client, _synthetic_document())
+            response = self._crop(client, synthetic_document())
             assert response.status_code == 413
 
     def test_corrupt_bytes_400(self) -> None:
@@ -563,6 +727,34 @@ class TestCrop:
             )
             assert response.status_code == 415
 
+    def test_crop_face_check_holds_detector_lock(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
+        """The /crop face check must serialize via the engine lock."""
+
+        class _RecordingDetector(_StubDetector):
+            def __init__(self, lock: Any, faces: list[Any]) -> None:
+                super().__init__(faces)
+                self._lock = lock
+                self.observed: list[bool] = []
+
+            def detect_face_landmarks(self, image_input: Any) -> list[Any]:
+                self.observed.append(self._lock.locked())
+                return super().detect_face_landmarks(image_input)
+
+        stub = _stub_engines()
+        detector = _RecordingDetector(stub.detector_lock, [_face()])
+        engines = Engines(
+            detector=detector,
+            ocr_reader=stub.ocr_reader,
+            mrz_reader=stub.mrz_reader,
+            detector_lock=stub.detector_lock,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = self._crop(client, synthetic_document(), side="front")
+            assert response.status_code == 200
+            assert detector.observed == [True]
+
 
 class TestRedisJobStore:
     def _store(self, **kwargs: int) -> RedisJobStore:
@@ -573,25 +765,29 @@ class TestRedisJobStore:
             lease_seconds=kwargs.get("lease_seconds", 120),
         )
 
-    def _payload(self) -> dict[str, Any]:
-        return {"image_b64": "aGk=", "types": ["face"]}
+    def _submit(self, store: RedisJobStore, job_id: str) -> None:
+        store.submit(job_id, b"image-bytes", ["face"])
 
     def test_submit_claim_fifo(self) -> None:
         store = self._store()
-        store.submit("a", self._payload())
-        store.submit("b", self._payload())
-        assert store.claim()[0] == "a"
-        assert store.claim()[0] == "b"
+        self._submit(store, "a")
+        self._submit(store, "b")
+        first = store.claim()
+        assert first is not None and first.job_id == "a"
+        assert first.image == b"image-bytes"
+        assert first.types == ["face"]
+        second = store.claim()
+        assert second is not None and second.job_id == "b"
         assert store.claim() is None
 
     def test_status_transitions(self) -> None:
         store = self._store()
-        store.submit("a", self._payload())
+        self._submit(store, "a")
         assert store.get("a").status == "queued"
-        job_id, _payload = store.claim()
-        assert job_id == "a"
+        claimed = store.claim()
+        assert claimed is not None and claimed.job_id == "a"
         assert store.get("a").status == "running"
-        store.write_result("a", {"state": "done"})
+        store.write_result("a", claimed.token, {"state": "done"})
         snapshot = store.get("a")
         assert snapshot.status == "done"
         assert snapshot.result == {"state": "done"}
@@ -602,22 +798,117 @@ class TestRedisJobStore:
 
     def test_max_queued_raises(self) -> None:
         store = self._store(max_queued=1)
-        store.submit("a", self._payload())
+        self._submit(store, "a")
         with pytest.raises(QueueFullError, match="queue is full"):
-            store.submit("b", self._payload())
+            self._submit(store, "b")
 
-    def test_claim_skips_expired_payload(self) -> None:
+    def test_concurrent_submits_respect_cap(self) -> None:
+        store = self._store(max_queued=5)
+        accepted: list[str] = []
+        rejected: list[str] = []
+        barrier = Barrier(8)
+
+        def worker(index: int) -> None:
+            barrier.wait()
+            try:
+                self._submit(store, f"job-{index}")
+            except QueueFullError:
+                rejected.append(f"job-{index}")
+            else:
+                accepted.append(f"job-{index}")
+
+        threads = [Thread(target=worker, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert len(accepted) == 5
+        assert len(rejected) == 3
+        assert int(store._redis.llen(QUEUE_KEY)) == 5
+
+    def test_claim_skips_expired_job(self) -> None:
         store = self._store()
-        store.submit("expired", self._payload())
-        store.submit("fresh", self._payload())
-        store._redis.delete(PAYLOAD_PREFIX + "expired")
-        assert store.claim()[0] == "fresh"
+        self._submit(store, "expired")
+        self._submit(store, "fresh")
+        store._redis.delete(JOB_PREFIX + "expired")
+        claimed = store.claim()
+        assert claimed is not None and claimed.job_id == "fresh"
         assert store.claim() is None
+
+    def test_renew_extends_claim_and_status_lease(self) -> None:
+        store = self._store(lease_seconds=120)
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        assert store.renew("a", claimed.token) is True
+        assert 0 < int(store._redis.ttl(CLAIM_PREFIX + "a")) <= 120
+        store._redis.delete(CLAIM_PREFIX + "a")
+        assert store.renew("a", claimed.token) is False
+
+    def test_renew_rejects_foreign_token(self) -> None:
+        store = self._store(lease_seconds=120)
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        assert store.renew("a", "not-the-owner") is False
+        assert store.renew("a", claimed.token) is True
+
+    def test_write_result_rejects_stale_claim(self) -> None:
+        store = self._store(lease_seconds=120)
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        store._redis.set(CLAIM_PREFIX + "a", "other-token", ex=120)
+        with pytest.raises(StaleClaimError):
+            store.write_result("a", claimed.token, {"state": "done"})
+        assert store.get("a").status == "running"
+
+    def test_write_result_frees_job_payload(self) -> None:
+        store = self._store()
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        store.write_result("a", claimed.token, {"state": "done"})
+        assert not store._redis.exists(JOB_PREFIX + "a")
+        assert not store._redis.exists(CLAIM_PREFIX + "a")
+
+    def test_results_index_self_prunes_on_write(self) -> None:
+        store = self._store()
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        store.write_result("a", claimed.token, {"state": "done"})
+        assert store.counts()["stored"] == 1
+        # simulate the result key's TTL window passing without a
+        # claim-once read: the index entry's expiry score is due
+        store._redis.zadd("blitzid:results", {"a": 0})
+        self._submit(store, "b")
+        claimed_b = store.claim()
+        assert claimed_b is not None
+        store.write_result("b", claimed_b.token, {"state": "done"})
+        assert store.counts()["stored"] == 1
+
+    def test_requeued_id_is_claimed_once(self) -> None:
+        """When the sweeper requeues an id that a worker popped but
+        did not claim, the next claim turn has exactly one winner."""
+        store = self._store()
+        self._submit(store, "a")
+        # worker pops the id; sweeper requeues it before any claim
+        store._redis.lmove(QUEUE_KEY, "blitzid:processing", "RIGHT", "LEFT")
+        store._redis.lpush(QUEUE_KEY, "a")
+        first = store.claim()
+        assert first is not None and first.job_id == "a"
+        # a second claimant racing the same queue turn loses to the
+        # token owner (the claim key exists and holds the token)
+        assert store.renew("a", "imposter-token") is False
+        with pytest.raises(StaleClaimError):
+            store.write_result("a", "imposter-token", {"state": "done"})
+        assert store.get("a").status == "running"
 
     def test_sweep_requeues_expired_leases_only(self) -> None:
         store = self._store()
-        store.submit("dead", self._payload())
-        store.submit("live", self._payload())
+        self._submit(store, "dead")
+        self._submit(store, "live")
         store.claim()
         store.claim()
         store._redis.delete(CLAIM_PREFIX + "dead")
@@ -625,15 +916,41 @@ class TestRedisJobStore:
         assert store.get("dead").status == "queued"
         assert store.get("live").status == "running"
 
+    def test_sweep_respects_queue_cap_and_drops_expired(self) -> None:
+        store = self._store(max_queued=2)
+        self._submit(store, "queued")
+        self._submit(store, "dead")
+        # both claimed, then both workers die; the queue refills to cap
+        claimed_queued = store.claim()
+        claimed_dead = store.claim()
+        assert claimed_queued is not None and claimed_dead is not None
+        self._submit(store, "filler1")
+        self._submit(store, "filler2")
+        store._redis.delete(CLAIM_PREFIX + "queued", CLAIM_PREFIX + "dead")
+        # queue at cap: the live-payload id stays in processing
+        assert store.sweep() == 0
+        assert store.get("queued").status == "running"
+        assert int(store._redis.llen(QUEUE_KEY)) == 2
+        # expired payload: dropped from processing instead of requeued
+        store._redis.delete(JOB_PREFIX + "dead")
+        assert store.sweep() == 1
+        # the id stays known (gone, not missing) — the client that
+        # submitted it learns its result will never come
+        assert store.get("dead").status == "gone"
+        assert int(store._redis.llen(PROCESSING_KEY)) == 1
+
     def test_counts_and_ping(self) -> None:
         store = self._store()
-        store.submit("a", self._payload())
-        store.claim()
-        store.write_result("a", {"state": "done"})
-        store.submit("b", self._payload())
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        store.write_result("a", claimed.token, {"state": "done"})
+        self._submit(store, "b")
         assert store.ping() is True
         assert store.counts() == {"queued": 1, "running": 0, "stored": 1}
         assert store._redis.llen(QUEUE_KEY) == 1
+        assert store.get("a").status == "done"  # claim-once drops stored count
+        assert store.counts()["stored"] == 0
 
 
 _INTEGRATION = bool(os.environ.get("BLITZID_OCR_INTEGRATION"))

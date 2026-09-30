@@ -5,8 +5,9 @@ by per-engine locks, with the face detector's LRU cache disabled —
 uploads are unique images, so the cache gives no hits and its
 non-thread-safe ``OrderedDict`` LRU would be a data race. Worker
 threads claim queued jobs from Redis and run analyses locally (the
-concurrency cap bounds per-process analyses); a lease sweeper requeues
-jobs abandoned by a crashed worker.
+concurrency cap bounds per-process analyses); a heartbeat extends each
+running job's claim lease, and a lease sweeper requeues jobs abandoned
+by a crashed worker.
 
 Env knobs (see ``.env.example``): ``BLITZID_API_REDIS_URL``,
 ``BLITZID_API_MAX_UPLOAD_MB``, ``BLITZID_API_JOB_TTL_SECONDS``,
@@ -17,29 +18,38 @@ the engine weights.
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 import threading
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
 
 import redis
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 
 from .. import DocumentCropper, FaceDetectorDNN, MRZReader, RapidOCRReader
 from ..exceptions import BlitzIDError
 from ._analyze import Engines, run_job
-from ._jobs import JobSnapshot, QueueFullError, RedisJobStore
-from ._schemas import CropResponse, HealthResponse, JobCreated, JobPayload
+from ._jobs import (
+    ClaimedJob,
+    JobSnapshot,
+    QueueFullError,
+    RedisJobStore,
+    StaleClaimError,
+)
+from ._schemas import CropResponse, HealthResponse, JobCreated
 from ._upload import encode_jpeg_b64, validate_image_upload
 
 _ANALYSIS_TYPES = frozenset({"face", "ocr", "mrz"})
 _SIDES = frozenset({"front", "back", "unknown"})
 _LOG = logging.getLogger(__name__)
+
+
+class _JobCancelled(Exception):
+    """Raised in a worker whose claim on the running job was lost."""
 
 
 @dataclass(frozen=True)
@@ -129,21 +139,84 @@ class _Workers:
             if claimed is None:
                 self._stop.wait(0.1)
                 continue
-            self._execute(claimed[0], claimed[1])
+            self._execute(claimed)
 
-    def _execute(self, job_id: str, payload: dict[str, Any]) -> None:
-        """Run one claimed job; any failure becomes a failed result."""
+    def _execute(self, claimed: ClaimedJob) -> None:
+        """Run one claimed job; any failure becomes a failed result.
+
+        The claim lease is extended by a heartbeat thread while the
+        analysis runs, so the sweeper only requeues jobs whose worker
+        actually died. When the lease is lost mid-run (the job was
+        re-claimed by another worker), this worker cancels the
+        analysis and discards its result — the new owner's result
+        wins.
+        """
+        cancelled = threading.Event()
         try:
-            result = run_job(JobPayload.model_validate(payload), self._engines)
+            with self._lease_heartbeat(claimed, cancelled):
+                result = run_job(claimed.image, claimed.types, self._engines)
+        except _JobCancelled:
+            _LOG.warning(
+                "job %s abandoned by this worker (claim lost mid-run)",
+                claimed.job_id,
+            )
+            return
         except Exception as e:  # report, never crash the worker
-            _LOG.warning("job %s failed: %s: %s", job_id, type(e).__name__, e)
+            _LOG.warning("job %s failed: %s: %s", claimed.job_id, type(e).__name__, e)
             result = {"state": "failed", "error": f"{type(e).__name__}: {e}"}
         try:
-            self._store.write_result(job_id, result)
+            self._store.write_result(claimed.job_id, claimed.token, result)
+        except StaleClaimError:
+            _LOG.warning(
+                "job %s result discarded (claim lost before the write)",
+                claimed.job_id,
+            )
         except redis.RedisError as e:
-            _LOG.error("job %s result lost (store unavailable): %s", job_id, e)
+            _LOG.error("job %s result lost (store unavailable): %s", claimed.job_id, e)
 
-    def _claim_safely(self) -> tuple[str, dict[str, Any]] | None:
+    @contextmanager
+    def _lease_heartbeat(
+        self, claimed: ClaimedJob, cancelled: threading.Event
+    ) -> Iterator[None]:
+        """Extend a job's claim lease on a background thread.
+
+        Sets *cancelled* when the claim lease is lost; the check after
+        the context exits raises :class:`_JobCancelled` in the worker.
+        """
+        stop = threading.Event()
+        heartbeat = threading.Thread(
+            target=self._heartbeat,
+            args=(claimed, stop, cancelled),
+            name=f"blitzid-heartbeat-{claimed.job_id}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            heartbeat.join(timeout=1.0)
+        if cancelled.is_set():
+            raise _JobCancelled
+
+    def _heartbeat(
+        self, claimed: ClaimedJob, stop: threading.Event, cancelled: threading.Event
+    ) -> None:
+        """Renew a job's claim lease until told to stop.
+
+        A failed renewal (the claim was lost) cancels the running
+        analysis — the re-claimed worker owns the job now.
+        """
+        interval = max(1.0, self._config.lease_seconds / 3)
+        while not stop.wait(interval):
+            try:
+                if not self._store.renew(claimed.job_id, claimed.token):
+                    cancelled.set()
+                    return
+            except redis.RedisError as e:
+                _LOG.warning("job %s lease renewal failed: %s", claimed.job_id, e)
+
+    def _claim_safely(self) -> ClaimedJob | None:
         try:
             return self._store.claim()
         except redis.RedisError:
@@ -195,7 +268,10 @@ def create_app(
         app.state.config = config
         app.state.store = job_store
         app.state.engines = app_engines
-        app.state.cropper = DocumentCropper(detector=app_engines.detector)
+        app.state.cropper = DocumentCropper(
+            detector=app_engines.detector,
+            detector_lock=app_engines.detector_lock,
+        )
         workers.start()
         yield
         workers.stop()
@@ -240,10 +316,12 @@ def _ensure_engines(types: list[str], engines: Engines) -> None:
         )
 
 
-def _submit_safely(store: RedisJobStore, job_id: str, payload: dict[str, Any]) -> None:
+def _submit_safely(
+    store: RedisJobStore, job_id: str, image: bytes, types: list[str]
+) -> None:
     """Submit a job, mapping store failures to 503 + Retry-After."""
     try:
-        store.submit(job_id, payload)
+        store.submit(job_id, image, types)
     except QueueFullError as e:
         raise HTTPException(503, str(e), headers={"Retry-After": "1"}) from e
     except redis.RedisError as e:
@@ -267,11 +345,7 @@ def _register_routes(app: FastAPI) -> None:
         data = image.file.read()
         validate_image_upload(data, request.app.state.config.max_upload_bytes)
         job_id = uuid.uuid4().hex
-        payload = JobPayload(
-            image_b64=base64.b64encode(data).decode("ascii"),
-            types=analysis_types,  # type: ignore[arg-type]
-        )
-        _submit_safely(request.app.state.store, job_id, payload.model_dump())
+        _submit_safely(request.app.state.store, job_id, data, analysis_types)
         return JobCreated(job_id=job_id, status="queued", status_url=f"/jobs/{job_id}")
 
     @app.get("/jobs/{job_id}")
@@ -309,11 +383,19 @@ def _register_routes(app: FastAPI) -> None:
         )
 
     @app.get("/health", response_model=HealthResponse)
-    def health(request: Request) -> HealthResponse:
-        """Report engine, Redis, and job availability for orchestration."""
+    def health(request: Request, response: Response) -> HealthResponse:
+        """Report engine, Redis, and job availability for orchestration.
+
+        Returns ``503`` when the job store is unreachable (the service
+        cannot accept or process jobs, so the container is unhealthy);
+        a missing engine stays ``200`` with its ``models`` flag false —
+        submitting that analysis yields a precise ``400``.
+        """
         store: RedisJobStore = request.app.state.store
         engines: Engines = request.app.state.engines
         redis_ok = store.ping()
+        if not redis_ok:
+            response.status_code = 503
         return HealthResponse(
             status="ok" if redis_ok else "degraded",
             models={

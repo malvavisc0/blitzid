@@ -126,7 +126,7 @@ class ModelManager:
 
             tmp_path.replace(path)
             self.logger.info(
-                "%s downloaded (%.1f KB)", path.name, tmp_path.stat().st_size / 1024
+                "%s downloaded (%.1f KB)", path.name, path.stat().st_size / 1024
             )
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
             tmp_path.unlink(missing_ok=True)

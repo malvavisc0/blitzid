@@ -24,6 +24,7 @@ import onnxruntime as ort  # type: ignore[import-untyped]
 from blitzid import FaceDetectorDNN
 
 PRESETS = ("fast", "balanced", "accurate")
+_INIT_RUNS = 5
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -83,16 +84,23 @@ def _detector(preset: str) -> FaceDetectorDNN:
 def _benchmark_detection(
     preset: str, image: Path, runs: int
 ) -> tuple[str, str, float, float]:
-    """Time engine init and warm detection for one preset."""
-    start = time.perf_counter()
-    detector = _detector(preset)
-    init_ms = (time.perf_counter() - start) * 1000
+    """Time engine init and warm detection for one preset.
+
+    Init is the median of several constructions — a single sample is
+    dominated by one-time onnxruntime setup and run order, not by the
+    preset (all presets load the same model).
+    """
+    init_timings = []
+    for _ in range(_INIT_RUNS):
+        start = time.perf_counter()
+        detector = _detector(preset)
+        init_timings.append((time.perf_counter() - start) * 1000)
 
     timings = _timed_ms(lambda: detector.detect_face(image), runs)
     return (
         preset,
         f"detect_face ({image.name})",
-        init_ms,
+        statistics.median(init_timings),
         statistics.median(timings),
     )
 

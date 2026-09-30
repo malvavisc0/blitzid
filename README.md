@@ -231,16 +231,16 @@ python scripts/ocr_demo.py --image images/bub_der_personalausweis_kopie.jpg
 
 Rough single-image timings from [`scripts/benchmark.py`](scripts/benchmark.py)
 (11th Gen Intel Core i7-11850H; python 3.13, onnxruntime 1.30, x86_64;
-median of 20 warm runs):
+median of 20 warm runs; init is the median of 5 constructions):
 
 | Pipeline | Benchmark | Init (ms) | Median (ms) |
 |---|---|---|---|
-| fast | `detect_face` (specimen ID card) | 30 | 4 |
-| balanced | `detect_face` (specimen ID card) | 12 | 4 |
-| accurate | `detect_face` (specimen ID card) | 13 | 25 |
+| fast | `detect_face` (specimen ID card) | 19 | 4 |
+| balanced | `detect_face` (specimen ID card) | 18 | 4 |
+| accurate | `detect_face` (specimen ID card) | 19 | 24 |
 | balanced | `detect_face_with_metrics` (cache hit) | — | 4 |
-| RapidOCRReader | `read` (specimen ID card) | 771 | 817 |
-| MRZReader | `read` (specimen ID card) | 963 | 1047 |
+| RapidOCRReader | `read` (specimen ID card) | 725 | 1024 |
+| MRZReader | `read` (specimen ID card) | 1015 | 972 |
 
 The benchmark reports the CPU model automatically, so results files in
 `results/` carry the same context.

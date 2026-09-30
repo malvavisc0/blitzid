@@ -49,25 +49,20 @@ table and writes it to `results/benchmark-<timestamp>.md`.
 uv run python scripts/benchmark.py --markdown
 ```
 
-## `midv500_download.py` — MIDV-500 dataset download (needs `scripts` extra)
+## `midv500.py` — MIDV-500 dataset tooling (needs `scripts` extra)
 
-Downloads the MIDV-500 / MIDV-2019 dataset into a local data directory.
-Datasets are runtime artifacts: keep them out of the repo.
-
-```bash
-uv run python scripts/midv500_download.py --dataset midv500 data/
-```
-
-## `midv500_face_test.py` — face detection over MIDV-500 (needs `scripts` extra)
-
-Runs `FaceDetectorDNN` across a downloaded MIDV-500 tree, reporting
-detection statistics; optionally saves crops and visualizations
+One script, two subcommands. `download` fetches the MIDV-500 /
+MIDV-2019 dataset into a local data directory; `test` runs
+`FaceDetectorDNN` across a downloaded tree, reporting detection
+statistics; optionally saves crops and visualizations
 (`--save-faces`, `--save-vis`, `--faces-dir`, `--results-dir`, plus
 `--max-docs` / `--max-images-per-doc` / `--max-images-total` limits to
-bound runtime).
+bound runtime). Datasets are runtime artifacts: keep them out of the
+repo.
 
 ```bash
-uv run python scripts/midv500_face_test.py data/midv500 --max-docs 3
+uv run python scripts/midv500.py download data/
+uv run python scripts/midv500.py test data/midv500 --max-docs 3
 ```
 
 ## PII

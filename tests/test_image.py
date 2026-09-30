@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from blitzid._image import (
+    MAX_DIMENSION,
     MIN_DIMENSION,
     _load_from_array,
     _load_from_path,
@@ -22,9 +23,6 @@ from blitzid._image import (
 from blitzid.exceptions import ImageError
 
 logger = logging.getLogger("test_image")
-
-
-# ── _load_from_array ─────────────────────────────────────────
 
 
 class TestLoadFromArray:
@@ -55,9 +53,6 @@ class TestLoadFromArray:
             _load_from_array(arr, logger)
 
 
-# ── load_image (type dispatch + happy paths) ──────────────────
-
-
 class TestLoadImage:
     def test_unsupported_type_raises(self) -> None:
         with pytest.raises(ImageError, match="Unsupported"):
@@ -82,13 +77,15 @@ class TestLoadImage:
         assert result.shape == (100, 100, 3)
 
 
-# ── _validate_image ───────────────────────────────────────────
-
-
 class TestValidateImage:
     def test_too_small_raises(self) -> None:
         arr = np.zeros((MIN_DIMENSION - 1, MIN_DIMENSION, 3), dtype=np.uint8)
         with pytest.raises(ImageError, match="too small"):
+            _validate_image(arr)
+
+    def test_too_large_raises(self) -> None:
+        arr = np.zeros((MAX_DIMENSION + 1, MIN_DIMENSION, 3), dtype=np.uint8)
+        with pytest.raises(ImageError, match="too large"):
             _validate_image(arr)
 
     def test_one_dimensional_raises(self) -> None:
@@ -108,9 +105,6 @@ class TestValidateImage:
         arr = np.zeros((0, 100), dtype=np.uint8)
         with pytest.raises(ImageError, match="empty"):
             _validate_image(arr)
-
-
-# ── _normalize_channels ───────────────────────────────────────
 
 
 class TestNormalizeChannels:
@@ -145,9 +139,6 @@ class TestNormalizeChannels:
         np.testing.assert_array_equal(result[10, 10], [1, 2, 3])
 
 
-# ── _load_from_path ───────────────────────────────────────────
-
-
 class TestLoadFromPath:
     def test_not_found_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ImageError, match="not found"):
@@ -168,9 +159,6 @@ class TestLoadFromPath:
         bad.write_bytes(b"not a real image at all")
         with pytest.raises(ImageError, match="Could not read"):
             _load_from_path(bad)
-
-
-# ── _load_from_pil ────────────────────────────────────────────
 
 
 class TestLoadFromPil:

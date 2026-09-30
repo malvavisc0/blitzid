@@ -1,54 +1,42 @@
-"""FaceDetectorDNN — the single public DNN detection class.
+"""FaceDetectorDNN — the SCRFD-based face detector.
 
-Merges the former facade, core detector, factory presets, cache, post-processing,
-visualizer, and metrics dataclass into one cohesive module.
-
-Design changes vs. the original multi-file architecture:
-- One class, no two-layer delegation.
-- NMS / IoU / size-filter are plain private functions.
-- Cache is an optional ``OrderedDict`` with ``get / put / clear``.
-- ``DetectionMetrics`` dataclass is the only return type from metrics methods.
-- Factory presets live as ``@classmethod`` helpers on this class.
-- CLAHE preprocessing removed; images are loaded raw.
+Runs the SCRFD-2.5G ONNX model via an onnxruntime CPU session, with an
+optional LRU result cache, multi-scale detection, NMS + size filtering,
+crop extraction, batch processing, and bbox visualization.
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
-from collections import OrderedDict
-from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from ._face import (
+    DetectionMetrics,
+    Face,
+    LRUCache,
+    as_tuple,
+    compute_hash,
+    draw_detections,
+)
 from ._image import ImageInput, load_image
 from ._models import ModelManager, default_model_dir
+from ._scrfd import (
+    SCRFD_STRIDES,
+    anchor_centers,
+    decode_outputs,
+    letterbox_image,
+    map_detections_to_faces,
+    to_blob,
+    validate_architecture,
+)
 from .exceptions import BlitzIDError
 
-# ---------------------------------------------------------------------------
-# Public dataclass (return type for metrics methods)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class DetectionMetrics:
-    """Container for detection metrics."""
-
-    faces: list[tuple[int, int, int, int, float]]
-    processing_time: float
-    image_size: tuple[int, int]
-    backend: str
-    num_faces: int
-    cache_hit: bool = False
-
-
-# ---------------------------------------------------------------------------
-# Private helpers — NMS, IoU, size filtering (replaces FaceProcessor)
-# ---------------------------------------------------------------------------
+__all__ = ["DetectionMetrics", "Face", "FaceDetectorDNN"]
 
 
 def _calculate_iou(
@@ -73,113 +61,35 @@ def _calculate_iou(
 
 
 def _apply_nms(
-    faces: list[tuple[int, int, int, int, float]],
+    faces: list[Face],
     threshold: float,
-) -> list[tuple[int, int, int, int, float]]:
+) -> list[Face]:
     """Non-Maximum Suppression.  Assumes *faces* is sorted by confidence."""
-    keep: list[tuple[int, int, int, int, float]] = []
+    keep: list[Face] = []
     for face in faces:
-        if all(_calculate_iou(face[:4], k[:4]) <= threshold for k in keep):
+        if all(_calculate_iou(face.bbox, k.bbox) <= threshold for k in keep):
             keep.append(face)
     return keep
 
 
 def _filter_by_size(
-    faces: list[tuple[int, int, int, int, float]],
+    faces: list[Face],
     min_size: tuple[int, int],
-) -> list[tuple[int, int, int, int, float]]:
+) -> list[Face]:
     """Drop faces smaller than *min_size* (w, h)."""
     min_w, min_h = min_size
-    return [f for f in faces if f[2] >= min_w and f[3] >= min_h]
-
-
-# ---------------------------------------------------------------------------
-# Private helpers — visualizer (replaces FaceVisualizer)
-# ---------------------------------------------------------------------------
-
-
-def _draw_detections(
-    image: np.ndarray,
-    faces: list[tuple[int, int, int, int, float]],
-    show_confidence: bool = True,
-    color: tuple[int, int, int] = (0, 255, 0),
-    thickness: int = 2,
-) -> np.ndarray:
-    """Draw bounding boxes (and optional labels) on a *copy* of *image*."""
-    img = image.copy()
-    for x, y, w, h, conf in faces:
-        cv2.rectangle(img, (x, y), (x + w, y + h), color, thickness)
-        if show_confidence:
-            label = f"{conf:.2f}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            ly = max(y, th + 10)
-            cv2.rectangle(img, (x, ly - th - 10), (x + tw, ly), color, -1)
-            cv2.putText(
-                img,
-                label,
-                (x, ly - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
-            )
-    return img
-
-
-# ---------------------------------------------------------------------------
-# Private helpers — cache (replaces DetectionCache)
-# ---------------------------------------------------------------------------
-
-
-def _compute_hash(img: np.ndarray) -> str:
-    """Content hash for an image array.  Raises on failure instead of
-    silently falling back to shape/dtype (Bug 5 fix)."""
-    return hashlib.md5(img.tobytes()).hexdigest()
-
-
-class _LRUCache:
-    """Minimal LRU cache backed by :class:`~collections.OrderedDict`."""
-
-    def __init__(self, max_size: int = 100):
-        self.max_size = max_size
-        self._data: OrderedDict[str, tuple[tuple[int, int, int, int, float], ...]] = (
-            OrderedDict()
-        )
-
-    def get(self, key: str) -> list[tuple[int, int, int, int, float]] | None:
-        if key not in self._data:
-            return None
-        self._data.move_to_end(key)
-        return list(self._data[key])
-
-    def put(self, key: str, value: list[tuple[int, int, int, int, float]]) -> None:
-        self._data[key] = tuple(value)
-        self._data.move_to_end(key)
-        while len(self._data) > self.max_size:
-            self._data.popitem(last=False)
-
-    def clear(self) -> None:
-        self._data.clear()
-
-    def size(self) -> int:
-        return len(self._data)
-
-
-# ---------------------------------------------------------------------------
-# Scale normalisation (simplified)
-# ---------------------------------------------------------------------------
+    return [f for f in faces if f.bbox[2] >= min_w and f.bbox[3] >= min_h]
 
 
 def _normalize_scales(scales: tuple[float, ...]) -> tuple[float, ...]:
-    """Validate and normalize multi-scale factors."""
+    """Validate, deduplicate, and sort multi-scale factors.
+
+    The values are used exactly as given: passing ``scales=(1.5,)`` runs
+    only the 1.5 pass, not a hidden 1.0 pass.
+    """
     if not scales or any(s < 1.0 for s in scales):
         raise BlitzIDError("scales must be non-empty with values >= 1.0")
-    return tuple(sorted(set(scales) | {1.0}))
-
-
-# ---------------------------------------------------------------------------
-# FaceDetectorDNN  — the public API
-# ---------------------------------------------------------------------------
+    return tuple(sorted(set(scales)))
 
 
 class FaceDetectorDNN:
@@ -200,50 +110,47 @@ class FaceDetectorDNN:
         model_dir: Path | None = None,
         multi_scale: bool = False,
         scales: tuple[float, ...] = (1.0, 1.5, 2.0),
-        require_cuda: bool = False,
+        det_size: tuple[int, int] = (640, 640),
     ):
-        # --- validate ---
         self._validate_parameters(
-            confidence_threshold, min_face_size, nms_threshold, max_cache_size
+            confidence_threshold, min_face_size, nms_threshold, max_cache_size, det_size
         )
 
         if model_dir is None:
             model_dir = default_model_dir()
 
-        # --- logger ---
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
 
-        # --- model ---
         self.model_manager = ModelManager(model_dir, self.logger)
-        self.net, self.backend = self.model_manager.load_network(
-            use_cuda=True, require_cuda=require_cuda
-        )
+        self.session = self.model_manager.load_session()
+        self.backend = "ONNXRuntime"
 
-        # --- config ---
+        # SCRFD ONNX export order: 3x scores (N,1), 3x boxes (N,4), 3x keypoints.
+        self._input_name = self.session.get_inputs()[0].name
+        self._output_names = [output.name for output in self.session.get_outputs()]
+        validate_architecture(len(self._output_names))
+
         self.confidence_threshold = confidence_threshold
         self.min_face_size = min_face_size
         self.nms_threshold = nms_threshold
         self.multi_scale = bool(multi_scale)
         self.scales = _normalize_scales(scales)
-        self.require_cuda = bool(require_cuda)
+        self.det_size = det_size
 
-        # --- optional cache ---
-        self._cache = _LRUCache(max_cache_size) if enable_cache else None
+        det_w, det_h = det_size
+        self._anchors = tuple(
+            anchor_centers(det_h // stride, det_w // stride, stride)
+            for stride in SCRFD_STRIDES
+        )
 
-        # Backward-compat alias (old facade exposed ``backend_type``).
-        self.backend_type = self.backend
-
-    # ------------------------------------------------------------------
-    # Factory presets (replaces FaceDetectorFactory)
-    # ------------------------------------------------------------------
+        self._cache = LRUCache(max_cache_size) if enable_cache else None
 
     @classmethod
     def create_fast_detector(
         cls,
         model_dir: Path | None = None,
         log_level: int = logging.WARNING,
-        require_cuda: bool = False,
     ) -> FaceDetectorDNN:
         """Speed-optimized preset."""
         return cls(
@@ -254,7 +161,6 @@ class FaceDetectorDNN:
             enable_cache=True,
             max_cache_size=200,
             model_dir=model_dir,
-            require_cuda=require_cuda,
         )
 
     @classmethod
@@ -262,7 +168,6 @@ class FaceDetectorDNN:
         cls,
         model_dir: Path | None = None,
         log_level: int = logging.INFO,
-        require_cuda: bool = False,
     ) -> FaceDetectorDNN:
         """Accuracy-optimized preset."""
         return cls(
@@ -272,7 +177,6 @@ class FaceDetectorDNN:
             log_level=log_level,
             enable_cache=False,
             model_dir=model_dir,
-            require_cuda=require_cuda,
         )
 
     @classmethod
@@ -280,7 +184,6 @@ class FaceDetectorDNN:
         cls,
         model_dir: Path | None = None,
         log_level: int = logging.INFO,
-        require_cuda: bool = False,
     ) -> FaceDetectorDNN:
         """Balanced speed/accuracy preset."""
         return cls(
@@ -291,12 +194,18 @@ class FaceDetectorDNN:
             enable_cache=True,
             max_cache_size=100,
             model_dir=model_dir,
-            require_cuda=require_cuda,
         )
 
-    # ------------------------------------------------------------------
-    # Parameter validation
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _validate_det_size(det_size: tuple[int, int]) -> None:
+        if not isinstance(det_size, tuple) or len(det_size) != 2:
+            raise BlitzIDError(f"det_size must be (width, height), got {det_size}")
+        if det_size[0] <= 0 or det_size[1] <= 0:
+            raise BlitzIDError(f"det_size dimensions must be positive, got {det_size}")
+        if det_size[0] % 32 != 0 or det_size[1] % 32 != 0:
+            raise BlitzIDError(
+                f"det_size dimensions must be multiples of 32, got {det_size}"
+            )
 
     @staticmethod
     def _validate_parameters(
@@ -304,6 +213,7 @@ class FaceDetectorDNN:
         min_face_size: tuple[int, int],
         nms_threshold: float,
         max_cache_size: int,
+        det_size: tuple[int, int],
     ) -> None:
         if not (0.0 <= confidence_threshold <= 1.0):
             raise BlitzIDError(
@@ -326,53 +236,43 @@ class FaceDetectorDNN:
             raise BlitzIDError(
                 f"max_cache_size must be non-negative, got {max_cache_size}"
             )
+        FaceDetectorDNN._validate_det_size(det_size)
 
-    # ------------------------------------------------------------------
-    # Core detection from array (single path for cache + detect + NMS)
-    # ------------------------------------------------------------------
-
-    def _detect_from_array(
-        self, img: np.ndarray
-    ) -> tuple[list[tuple[int, int, int, int, float]], float, bool]:
+    def _detect_from_array(self, img: np.ndarray) -> tuple[list[Face], float, bool]:
         """Detect faces from an already-loaded array.
 
         Returns:
-            ``(faces, processing_time, cache_hit)``
+            ``(faces, processing_time, cache_hit)``. ``processing_time``
+            is the real inference time; cache hits return the elapsed
+            cache-lookup time so downstream averages stay honest.
         """
+        start = time.time()
         if self._cache is not None:
-            key = _compute_hash(img)
+            key = compute_hash(img)
             cached = self._cache.get(key)
             if cached is not None:
                 self.logger.debug("Cache hit for key: %s...", key[:8])
-                return cached, 0.0, True
+                return cached, time.time() - start, True
 
-            start = time.time()
-            faces = self._postprocess(
-                self._run_detection_multi_scale(img)
-                if self.multi_scale
-                else self._run_detection(img)
-            )
-            elapsed = time.time() - start
-            self._cache.put(key, faces)
-            return faces, elapsed, False
-
-        start = time.time()
         faces = self._postprocess(
             self._run_detection_multi_scale(img)
             if self.multi_scale
             else self._run_detection(img)
         )
         elapsed = time.time() - start
-        return faces, elapsed, False
 
-    # ------------------------------------------------------------------
-    # Public detection API
-    # ------------------------------------------------------------------
+        if self._cache is not None:
+            self._cache.put(key, faces)
+        return faces, elapsed, False
 
     def detect_face(
         self, image_input: ImageInput
     ) -> list[tuple[int, int, int, int, float]]:
         """Detect faces.  Returns list of (x, y, w, h, confidence)."""
+        return [as_tuple(face) for face in self.detect_face_landmarks(image_input)]
+
+    def detect_face_landmarks(self, image_input: ImageInput) -> list[Face]:
+        """Detect faces with landmarks.  Returns list of :class:`Face`."""
         img = load_image(image_input, self.logger)
         faces, _, _ = self._detect_from_array(img)
         self._log_results(image_input, faces)
@@ -409,14 +309,15 @@ class FaceDetectorDNN:
 
         h, w = img.shape[:2]
         extracted: list[tuple[NDArray[np.uint8], tuple[int, int, int, int], float]] = []
-        for x, y, fw, fh, conf in faces:
+        for face in faces:
+            x, y, fw, fh = face.bbox
             pad_w = int(fw * padding)
             pad_h = int(fh * padding)
             x1 = max(0, x - pad_w)
             y1 = max(0, y - pad_h)
             x2 = min(w, x + fw + pad_w)
             y2 = min(h, y + fh + pad_h)
-            extracted.append((img[y1:y2, x1:x2], (x, y, fw, fh), conf))
+            extracted.append((img[y1:y2, x1:x2], (x, y, fw, fh), face.confidence))
 
         return extracted
 
@@ -433,9 +334,10 @@ class FaceDetectorDNN:
         img = load_image(image_input, self.logger)
 
         if faces is None:
-            faces, _, _ = self._detect_from_array(img)
+            detected, _, _ = self._detect_from_array(img)
+            faces = [as_tuple(face) for face in detected]
 
-        result = _draw_detections(img, faces, show_confidence, color, thickness)
+        result = draw_detections(img, faces, show_confidence, color, thickness)
 
         if output_path:
             cv2.imwrite(str(output_path), result)
@@ -448,7 +350,11 @@ class FaceDetectorDNN:
         image_paths: list[Path | str],
         show_progress: bool = True,
     ) -> dict[str, list[tuple[int, int, int, int, float]]]:
-        """Process multiple images in batch."""
+        """Process multiple images in batch.
+
+        Failed images are omitted from the result dict (an empty list
+        always means "processed, zero faces").
+        """
         results: dict[str, list[tuple[int, int, int, int, float]]] = {}
         total = len(image_paths)
 
@@ -467,7 +373,6 @@ class FaceDetectorDNN:
                     )
             except BlitzIDError as e:  # pragma: no cover
                 self.logger.error("Error processing %s: %s", path, e)
-                results[str(path)] = []
 
         return results
 
@@ -480,51 +385,31 @@ class FaceDetectorDNN:
         """Get number of cached results."""
         return self._cache.size() if self._cache is not None else 0
 
-    # ------------------------------------------------------------------
-    # Internal detection
-    # ------------------------------------------------------------------
+    @property
+    def cache_enabled(self) -> bool:
+        """Whether result caching is enabled on this detector."""
+        return self._cache is not None
 
-    def _run_detection(self, img: np.ndarray) -> list[tuple[int, int, int, int, float]]:
-        """DNN forward pass on a single-scale image."""
+    def _run_detection(self, img: np.ndarray) -> list[Face]:
+        """SCRFD forward pass on a single-scale image."""
         h, w = img.shape[:2]
-        blob = cv2.dnn.blobFromImage(
-            image=img,
-            scalefactor=1.0,
-            size=(300, 300),
-            mean=(104.0, 177.0, 123.0),
-            swapRB=False,
-            crop=False,
+        letterboxed, scale = letterbox_image(img, self.det_size)
+        blob = to_blob(letterboxed)
+        net_outs = self.session.run(self._output_names, {self._input_name: blob})
+
+        detections = decode_outputs(
+            net_outs[:3],
+            net_outs[3:6],
+            net_outs[6:9],
+            self._anchors,
+            self.confidence_threshold,
         )
-        self.net.setInput(blob)
-        detections = self.net.forward()
+        return map_detections_to_faces(detections, scale, (w, h))
 
-        faces: list[tuple[int, int, int, int, float]] = []
-        for i in range(detections.shape[2]):
-            conf = float(detections[0, 0, i, 2])
-            if conf <= self.confidence_threshold:
-                continue
-
-            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-            x1, y1, x2, y2 = box.astype(int)
-
-            x1 = int(max(0, min(int(x1), w - 1)))
-            y1 = int(max(0, min(int(y1), h - 1)))
-            x2 = int(max(0, min(int(x2), w)))
-            y2 = int(max(0, min(int(y2), h)))
-
-            if x2 <= x1 or y2 <= y1:
-                continue
-
-            faces.append((x1, y1, int(x2 - x1), int(y2 - y1), conf))
-
-        return faces
-
-    def _run_detection_multi_scale(
-        self, img: np.ndarray
-    ) -> list[tuple[int, int, int, int, float]]:
+    def _run_detection_multi_scale(self, img: np.ndarray) -> list[Face]:
         """Run detection across multiple scales and map boxes back."""
         orig_h, orig_w = img.shape[:2]
-        all_faces: list[tuple[int, int, int, int, float]] = []
+        all_faces: list[Face] = []
 
         for scale in self.scales:
             if abs(scale - 1.0) < 1e-9:
@@ -542,32 +427,40 @@ class FaceDetectorDNN:
                 all_faces.extend(faces_scaled)
                 continue
 
-            for x, y, bw, bh, conf in faces_scaled:
+            for face in faces_scaled:
+                x, y, bw, bh = face.bbox
                 x0 = int(max(0, min(round(x / s), orig_w - 1)))
                 y0 = int(max(0, min(round(y / s), orig_h - 1)))
                 w0 = int(max(1, min(round(bw / s), orig_w - x0)))
                 h0 = int(max(1, min(round(bh / s), orig_h - y0)))
-                all_faces.append((x0, y0, w0, h0, conf))
+                points = tuple(
+                    (
+                        max(0, min(round(px / s), orig_w - 1)),
+                        max(0, min(round(py / s), orig_h - 1)),
+                    )
+                    for px, py in face.landmarks
+                )
+                all_faces.append(
+                    Face(
+                        bbox=(x0, y0, w0, h0),
+                        confidence=face.confidence,
+                        landmarks=points,
+                    )
+                )
 
         return all_faces
 
-    def _postprocess(
-        self, faces: list[tuple[int, int, int, int, float]]
-    ) -> list[tuple[int, int, int, int, float]]:
+    def _postprocess(self, faces: list[Face]) -> list[Face]:
         """Size filter → sort → NMS."""
         faces = _filter_by_size(faces, self.min_face_size)
-        faces = sorted(faces, key=lambda f: f[4], reverse=True)
+        faces = sorted(faces, key=lambda f: f.confidence, reverse=True)
         faces = _apply_nms(faces, self.nms_threshold)
         return faces
-
-    # ------------------------------------------------------------------
-    # Logging
-    # ------------------------------------------------------------------
 
     def _log_results(
         self,
         image_input: ImageInput,
-        faces: list[tuple[int, int, int, int, float]],
+        faces: list[Face],
     ) -> None:
         if isinstance(image_input, Path):
             image_name = image_input.name
@@ -578,11 +471,12 @@ class FaceDetectorDNN:
 
         if faces:
             self.logger.info("%d face(s) detected in %s", len(faces), image_name)
-            for idx, (x, y, wb, hb, conf) in enumerate(faces, 1):
+            for idx, face in enumerate(faces, 1):
+                x, y, wb, hb = face.bbox
                 self.logger.debug(
                     "Face %d: confidence=%.2f | (%d,%d,%dx%d)",
                     idx,
-                    conf,
+                    face.confidence,
                     x,
                     y,
                     wb,

@@ -8,31 +8,29 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, TypeGuard, Union
 
 import cv2
 import numpy as np
 
 from .exceptions import ImageError
 
-try:
-    from PIL import Image as PIL  # type: ignore[import-not-found]
-
-    PIL_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    PIL = None
-    PIL_AVAILABLE = False
-
-if TYPE_CHECKING:  # pragma: no cover
-    from PIL.Image import Image as PILImageType  # type: ignore[import-not-found]
-else:
-    # Use a unique sentinel - not ``object``, which matches *everything*.
-    PILImageType = type("_PILStub", (), {})
+if TYPE_CHECKING:
+    from PIL.Image import Image as PILImageType
 
 ImageInput = Union[Path, str, np.ndarray, "PILImageType"]
 
 MIN_DIMENSION = 10
 MAX_DIMENSION = 10000
+
+
+def _is_pil_image(value: object) -> TypeGuard[PILImageType]:
+    """Return whether *value* is a PIL Image (PIL is an optional dependency)."""
+    try:
+        from PIL.Image import Image as PILImage
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(value, PILImage)
 
 
 def load_image(
@@ -54,7 +52,7 @@ def load_image(
     try:
         if isinstance(image_input, np.ndarray):
             img = _load_from_array(image_input, logger)
-        elif PIL_AVAILABLE and PIL is not None and isinstance(image_input, PIL.Image):
+        elif _is_pil_image(image_input):
             img = _load_from_pil(image_input)
         elif isinstance(image_input, (Path, str)):
             img = _load_from_path(Path(image_input))
@@ -67,11 +65,6 @@ def load_image(
 
     except (OSError, ValueError, TypeError, cv2.error) as e:
         raise ImageError(f"Unexpected error loading image: {e}") from e
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
 
 
 def _load_from_path(path: Path) -> np.ndarray:
@@ -144,6 +137,10 @@ def _validate_image(img: np.ndarray) -> None:
     if h < MIN_DIMENSION or w < MIN_DIMENSION:
         raise ImageError(
             f"Image too small: {w}x{h}. Minimum size is {MIN_DIMENSION}x{MIN_DIMENSION}"
+        )
+    if h > MAX_DIMENSION or w > MAX_DIMENSION:
+        raise ImageError(
+            f"Image too large: {w}x{h}. Maximum size is {MAX_DIMENSION}x{MAX_DIMENSION}"
         )
 
 

@@ -6,7 +6,7 @@ class BlitzIDError(Exception):
 
 
 class ModelError(BlitzIDError):
-    """Model download, load, or CUDA configuration failure."""
+    """Model download or load failure."""
 
 
 class ImageError(BlitzIDError):

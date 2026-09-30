@@ -53,6 +53,7 @@ models/**
 # Env files
 .env
 .env.*
+!.env.example
 
 results/*
 data/*

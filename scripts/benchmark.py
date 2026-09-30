@@ -139,11 +139,27 @@ def _benchmark_ocr(mrz_image: Path, runs: int) -> list[tuple[str, str, float, fl
     ]
 
 
-def _print_header(markdown: bool) -> None:
-    print(
+def _cpu_model() -> str:
+    """Best-effort CPU model name for the benchmark context line."""
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or platform.machine()
+
+
+def _context_line() -> str:
+    return (
         f"python {platform.python_version()} | "
-        f"onnxruntime {ort.__version__} | {platform.machine()}"
+        f"onnxruntime {ort.__version__} | "
+        f"{_cpu_model()} | {platform.machine()}"
     )
+
+
+def _print_header(markdown: bool) -> None:
+    print(_context_line())
     if markdown:
         print("\n| Pipeline | Benchmark | Init (ms) | Median (ms) |")
         print("|---|---|---|---|")
@@ -163,8 +179,7 @@ def _print_row(row: tuple[str, str, float, float], markdown: bool) -> None:
 def _table_rows(rows: list[tuple[str, str, float, float]]) -> list[str]:
     """Render the environment line and results as markdown lines."""
     lines = [
-        f"python {platform.python_version()} | "
-        f"onnxruntime {ort.__version__} | {platform.machine()}",
+        _context_line(),
         "",
         "| Pipeline | Benchmark | Init (ms) | Median (ms) |",
         "|---|---|---|---|",

@@ -1,7 +1,6 @@
 """FaceDetectorDNN demonstration script.
 
-Showcases the public API exposed by :mod:`blitzid.detector` and the
-optional :class:`~blitzid.deepface.FaceDetectorDeepFace` backend.
+Showcases the public API exposed by :mod:`blitzid.detector`.
 
 Run examples::
 
@@ -10,10 +9,6 @@ Run examples::
 
     # Single-image demos with the balanced preset
     python scripts/face_detector_demo.py --preset balanced --run all \
-        --image images/bub_der_personalausweis_kopie.jpg
-
-    # DeepFace backend
-    python scripts/face_detector_demo.py --preset deepface --run basic,extract \
         --image images/bub_der_personalausweis_kopie.jpg
 """
 
@@ -26,99 +21,30 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import cv2
+from demo_cli import _parse_args
 
-from blitzid import FaceDetectorDeepFace, FaceDetectorDNN, ImageLoadError
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from blitzid import FaceDetectorDNN, ImageLoadError
 
 
-def _parse_log_level(value: str) -> int:
-    """Parse a log-level string (e.g. ``"INFO"``) into a :mod:`logging` constant."""
-    mapping = {
-        "CRITICAL": logging.CRITICAL,
-        "ERROR": logging.ERROR,
-        "WARNING": logging.WARNING,
-        "INFO": logging.INFO,
-        "DEBUG": logging.DEBUG,
-    }
-    try:
-        return mapping[value.upper()]
-    except KeyError as e:
-        raise argparse.ArgumentTypeError(
-            f"Invalid log level: {value}. Choose from: {', '.join(mapping)}"
-        ) from e
-
-
-def _parse_run_list(value: str) -> list[str]:
-    """Parse ``--run`` into a list of demo names."""
-    value = value.strip().lower()
-    if value == "all":
-        return [
-            "basic",
-            "metrics",
-            "visualize",
-            "extract",
-            "analyze",
-            "batch",
-            "cache",
-            "errors",
-        ]
-    return [v.strip().lower() for v in value.split(",") if v.strip()]
-
-
-# ---------------------------------------------------------------------------
-# Detector construction
-# ---------------------------------------------------------------------------
-
-
-def _build_detector(args: argparse.Namespace) -> FaceDetectorDNN | FaceDetectorDeepFace:
+def _build_detector(args: argparse.Namespace) -> FaceDetectorDNN:
     """Construct a detector from CLI arguments."""
-
     if args.preset == "fast":
         return FaceDetectorDNN.create_fast_detector(
             model_dir=args.model_dir,
             log_level=args.log_level,
-            require_cuda=args.require_cuda,
         )
 
     if args.preset == "accurate":
         return FaceDetectorDNN.create_accurate_detector(
             model_dir=args.model_dir,
             log_level=args.log_level,
-            require_cuda=args.require_cuda,
         )
 
     if args.preset == "balanced":
         return FaceDetectorDNN.create_balanced_detector(
             model_dir=args.model_dir,
             log_level=args.log_level,
-            require_cuda=args.require_cuda,
         )
-
-    if args.preset == "deepface":
-        detector = FaceDetectorDeepFace(
-            model_dir=args.model_dir,
-            log_level=args.log_level,
-            detector_backend="retinaface",
-            align=True,
-            enforce_detection=False,
-        )
-        if args.require_cuda:
-            try:
-                import tensorflow as tf  # type: ignore[import-untyped]
-
-                gpus = tf.config.list_physical_devices("GPU")
-            except Exception as exc:
-                raise SystemExit(
-                    f"--require-cuda set but TensorFlow GPU unavailable: {exc}"
-                ) from exc
-            if not gpus:
-                raise SystemExit(
-                    "--require-cuda set but TensorFlow reports no GPU devices"
-                )
-        return detector
 
     if args.preset == "custom":
         return FaceDetectorDNN(
@@ -129,25 +55,23 @@ def _build_detector(args: argparse.Namespace) -> FaceDetectorDNN | FaceDetectorD
             enable_cache=args.cache,
             max_cache_size=args.max_cache_size,
             model_dir=args.model_dir,
-            require_cuda=args.require_cuda,
         )
 
     raise ValueError(f"Unknown preset: {args.preset}")  # pragma: no cover
 
 
-# ---------------------------------------------------------------------------
-# Demo functions
-# ---------------------------------------------------------------------------
+def _banner(title: str) -> None:
+    print("\n" + "=" * 70)
+    print(f"DEMO: {title}")
+    print("=" * 70)
 
 
 def demo_basic_detection(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
+    detector: FaceDetectorDNN,
     image_path: Path,
 ) -> None:
     """Single detection call — print per-face results."""
-    print("\n" + "=" * 70)
-    print("DEMO: Basic Detection")
-    print("=" * 70)
+    _banner("Basic Detection")
 
     faces = detector.detect_face(image_path)
     print(f"Image: {image_path} | faces: {len(faces)}")
@@ -156,23 +80,17 @@ def demo_basic_detection(
 
 
 def demo_metrics(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
+    detector: FaceDetectorDNN,
     image_path: Path,
 ) -> None:
     """Show metrics output (miss → hit when caching is enabled)."""
-    print("\n" + "=" * 70)
-    print("DEMO: Detection With Metrics")
-    print("=" * 70)
+    _banner("Detection With Metrics")
 
-    # Clear cache so the first call is a guaranteed miss.
-    if isinstance(detector, FaceDetectorDNN):
-        detector.clear_cache()
+    detector.clear_cache()
 
-    r1 = detector.detect_face_with_metrics(image_path)
-    r2 = detector.detect_face_with_metrics(image_path)
-
-    for label, r in [("First call", r1), ("Second call", r2)]:
+    for label in ("First call", "Second call"):
         print(f"{label}:")
+        r = detector.detect_face_with_metrics(image_path)
         print(f"  faces:              {r.num_faces}")
         print(f"  backend:            {r.backend}")
         print(f"  cache_hit:          {r.cache_hit}")
@@ -181,15 +99,13 @@ def demo_metrics(
 
 
 def demo_visualization(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
+    detector: FaceDetectorDNN,
     image_path: Path,
     results_dir: Path,
     label: str,
 ) -> None:
     """Draw detections and write visualisation images."""
-    print("\n" + "=" * 70)
-    print("DEMO: Visualization")
-    print("=" * 70)
+    _banner("Visualization")
 
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -206,16 +122,14 @@ def demo_visualization(
 
 
 def demo_face_extraction(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
+    detector: FaceDetectorDNN,
     image_path: Path,
     results_dir: Path,
     label: str,
     padding: float,
 ) -> None:
     """Extract face crops and save them."""
-    print("\n" + "=" * 70)
-    print("DEMO: Face Extraction")
-    print("=" * 70)
+    _banner("Face Extraction")
 
     results_dir.mkdir(parents=True, exist_ok=True)
     extracted = detector.extract_faces(image_path, padding=padding)
@@ -230,46 +144,13 @@ def demo_face_extraction(
         )
 
 
-def demo_deepface_analyze_on_crop(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
-    image_path: Path,
-    results_dir: Path,
-    label: str,
-) -> None:
-    """Save a cropped face and run ``analyze()`` (DeepFace only)."""
-    print("\n" + "=" * 70)
-    print("DEMO: DeepFace Analyze on Saved Crop")
-    print("=" * 70)
-
-    if not isinstance(detector, FaceDetectorDeepFace):
-        print("analyze() not supported by this backend; skipping")
-        return
-
-    results_dir.mkdir(parents=True, exist_ok=True)
-    extracted = detector.extract_faces(image_path, padding=0.0)
-    if not extracted:
-        print("No faces extracted; skipping")
-        return
-
-    face_img, _bbox, conf = extracted[0]
-    crop_path = results_dir / f"{label}_crop_for_analyze_conf_{conf:.2f}.jpg"
-    cv2.imwrite(str(crop_path), face_img)
-    print(f"Wrote crop: {crop_path}")
-
-    attrs = detector.analyze(crop_path, actions=["age", "gender"])
-    print("analyze() result (age/gender):")
-    print(attrs)
-
-
 def demo_batch_processing(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
+    detector: FaceDetectorDNN,
     image_dir: Path,
     max_images: int,
 ) -> None:
     """Run detection over many images and print a summary."""
-    print("\n" + "=" * 70)
-    print("DEMO: Batch Processing")
-    print("=" * 70)
+    _banner("Batch Processing")
 
     patterns = ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.tif", "*.tiff")
     paths: list[Path] = []
@@ -283,17 +164,7 @@ def demo_batch_processing(
     image_path_args: list[str | Path] = list(paths)
     print(f"Batch input dir: {image_dir} | images: {len(paths)}")
 
-    if isinstance(detector, FaceDetectorDNN):
-        results = detector.detect_faces_batch(image_path_args, show_progress=True)
-    else:
-        # FaceDetectorDeepFace has no batch method — loop manually.
-        results: dict[str, list[tuple[int, int, int, int, float]]] = {}
-        for p in paths:
-            try:
-                results[str(p)] = detector.detect_face(p)
-            except Exception as e:
-                print(f"  Error on {p}: {e}")
-                results[str(p)] = []
+    results = detector.detect_faces_batch(image_path_args, show_progress=True)
 
     total_faces = sum(len(v) for v in results.values())
     print("Batch summary:")
@@ -302,19 +173,13 @@ def demo_batch_processing(
 
 
 def demo_cache_speed(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
+    detector: FaceDetectorDNN,
     image_path: Path,
 ) -> None:
     """Crude timing demo: uncached → cached call."""
-    print("\n" + "=" * 70)
-    print("DEMO: Cache Speed")
-    print("=" * 70)
+    _banner("Cache Speed")
 
-    if not isinstance(detector, FaceDetectorDNN):
-        print("Cache not supported by this backend; skipping")
-        return
-
-    if detector.get_cache_size() == 0 and detector._cache is None:
+    if not detector.cache_enabled:
         print("Cache disabled; skipping")
         return
 
@@ -335,12 +200,10 @@ def demo_cache_speed(
 
 
 def demo_error_handling(
-    detector: FaceDetectorDNN | FaceDetectorDeepFace,
+    detector: FaceDetectorDNN,
 ) -> None:
     """Demonstrate custom exceptions on invalid inputs."""
-    print("\n" + "=" * 70)
-    print("DEMO: Error Handling")
-    print("=" * 70)
+    _banner("Error Handling")
 
     try:
         detector.detect_face("nonexistent.jpg")
@@ -348,140 +211,14 @@ def demo_error_handling(
         print(f"Caught ImageLoadError: {e}")
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
-def main(argv: Iterable[str] | None = None) -> None:
-    """CLI entrypoint."""
-    parser = argparse.ArgumentParser(description="FaceDetectorDNN demo")
-
-    parser.add_argument(
-        "--preset",
-        choices=["balanced", "fast", "accurate", "deepface", "custom"],
-        default="balanced",
-        help="Detector preset",
-    )
-    parser.add_argument(
-        "--run",
-        default="batch",
-        help=(
-            "Comma-separated demos: "
-            "basic,metrics,visualize,extract,analyze,batch,cache,errors "
-            "or 'all'"
-        ),
-    )
-    parser.add_argument(
-        "--image",
-        type=Path,
-        default=None,
-        help="Path to a test image (required for single-image demos)",
-    )
-    parser.add_argument(
-        "--results-dir",
-        type=Path,
-        default=Path("results"),
-        help="Directory for output images",
-    )
-    parser.add_argument(
-        "--batch-dir",
-        type=Path,
-        default=Path("images"),
-        help="Directory for batch processing",
-    )
-    parser.add_argument(
-        "--max-images",
-        type=int,
-        default=0,
-        help="Limit batch image count (0 = no limit)",
-    )
-    parser.add_argument(
-        "--padding",
-        type=float,
-        default=0.2,
-        help="Face crop padding fraction (0.0-1.0)",
-    )
-    parser.add_argument(
-        "--cache",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable/disable caching",
-    )
-    parser.add_argument(
-        "--max-cache-size",
-        type=int,
-        default=200,
-        help="Maximum cache entries",
-    )
-    parser.add_argument(
-        "--log-level",
-        type=_parse_log_level,
-        default=logging.INFO,
-        help="Logging level (DEBUG, INFO, WARNING, ERROR)",
-    )
-    parser.add_argument(
-        "--model-dir",
-        type=Path,
-        default=None,
-        help="Model directory (default uses platformdirs cache)",
-    )
-    parser.add_argument(
-        "--require-cuda",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Fail fast if CUDA cannot be used",
-    )
-
-    # Custom-preset knobs
-    parser.add_argument(
-        "--confidence-threshold",
-        type=float,
-        default=0.5,
-        help="(custom preset) confidence threshold (0.0-1.0)",
-    )
-    parser.add_argument(
-        "--min-face-size",
-        type=int,
-        nargs=2,
-        default=(50, 50),
-        metavar=("W", "H"),
-        help="(custom preset) minimum face size in pixels",
-    )
-    parser.add_argument(
-        "--nms-threshold",
-        type=float,
-        default=0.3,
-        help="(custom preset) NMS IoU threshold (0.0-1.0)",
-    )
-
-    args = parser.parse_args(list(argv) if argv is not None else None)
-
-    logging.basicConfig(level=args.log_level, format="%(levelname)s - %(message)s")
-
-    run_list = _parse_run_list(args.run)
-
-    needs_image = any(
-        n in run_list
-        for n in ("basic", "metrics", "visualize", "extract", "analyze", "cache")
-    )
-
-    image_path = args.image
-    if needs_image:
-        if image_path is None:
-            raise SystemExit(
-                "--image is required for the selected demos "
-                "(basic/metrics/visualize/extract/analyze/cache)"
-            )
-        if not image_path.exists():
-            raise SystemExit(f"Image not found: {image_path}")
-
-    detector = _build_detector(args)
-
-    # Label for output filenames.
-    cache_on = isinstance(detector, FaceDetectorDNN) and detector._cache is not None
-    label = f"{args.preset}_cache_{'on' if cache_on else 'off'}"
-
+def _run_image_demos(
+    detector: FaceDetectorDNN,
+    run_list: list[str],
+    image_path: Path,
+    args: argparse.Namespace,
+    label: str,
+) -> None:
+    """Run the demos that operate on a single image."""
     if "basic" in run_list:
         demo_basic_detection(detector, image_path)
     if "metrics" in run_list:
@@ -492,14 +229,38 @@ def main(argv: Iterable[str] | None = None) -> None:
         demo_face_extraction(
             detector, image_path, args.results_dir, label, padding=args.padding
         )
-    if "analyze" in run_list:
-        demo_deepface_analyze_on_crop(detector, image_path, args.results_dir, label)
-    if "batch" in run_list:
-        demo_batch_processing(detector, args.batch_dir, args.max_images)
     if "cache" in run_list:
         demo_cache_speed(detector, image_path)
+
+
+def _run_demos(
+    detector: FaceDetectorDNN,
+    run_list: list[str],
+    image_path: Path | None,
+    args: argparse.Namespace,
+    label: str,
+) -> None:
+    """Run the selected demos."""
+    if image_path is not None:
+        _run_image_demos(detector, run_list, image_path, args, label)
+    if "batch" in run_list:
+        demo_batch_processing(detector, args.batch_dir, args.max_images)
     if "errors" in run_list:
         demo_error_handling(detector)
+
+
+def main(argv: Iterable[str] | None = None) -> None:
+    """CLI entrypoint."""
+    args, run_list, image_path = _parse_args(list(argv) if argv is not None else None)
+
+    logging.basicConfig(level=args.log_level, format="%(levelname)s - %(message)s")
+
+    detector = _build_detector(args)
+
+    cache_on = detector.cache_enabled
+    label = f"{args.preset}_cache_{'on' if cache_on else 'off'}"
+
+    _run_demos(detector, run_list, image_path, args, label)
 
 
 if __name__ == "__main__":

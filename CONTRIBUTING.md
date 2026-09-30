@@ -16,14 +16,18 @@ uv run pre-commit install
 
 ```bash
 # Lint
-uv run ruff check src/ tests/
-uv run ruff format --check src/ tests/
+uv run ruff check src/ tests/ scripts/
+uv run ruff format --check src/ tests/ scripts/
 
 # Type checking
-uv run mypy src/
+uv run mypy src/ scripts/
 
 # Tests
 uv run pytest tests/ -v
+
+# Complexity + dead code (see docs/coding-standard.md)
+uvx radon cc src scripts tests -s | grep -E '\-\s(C|D|E|F)\s'   # must be empty
+uvx vulture src/ tests/ scripts/ --min-confidence 60
 ```
 
 ## Pull request guidelines

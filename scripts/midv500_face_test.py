@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import statistics
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -22,23 +22,17 @@ import cv2
 from blitzid import FaceDetectorDNN
 from blitzid.exceptions import BlitzIDError
 
-# ---------------------------------------------------------------------------
-# Data
-# ---------------------------------------------------------------------------
 
-
-@dataclass(frozen=True)
+@dataclass
 class RunStats:
-    images_total: int
-    images_processed: int
-    images_ok: int
-    images_failed: int
-    faces_total: int
+    """Accumulated counters for one dataset run."""
 
-
-# ---------------------------------------------------------------------------
-# Dataset helpers
-# ---------------------------------------------------------------------------
+    processed: int = 0
+    ok: int = 0
+    vis_saved: int = 0
+    faces_saved_total: int = 0
+    faces_per_image: list[int] = field(default_factory=list)
+    failures: list[tuple[Path, str]] = field(default_factory=list)
 
 
 def _find_set_roots(root: Path) -> list[Path]:
@@ -65,6 +59,9 @@ def _find_set_roots(root: Path) -> list[Path]:
 
 
 def _find_document_roots(set_root: Path) -> list[Path]:
+    if not set_root.is_dir():
+        return []
+
     if (set_root / "images").is_dir() and (set_root / "ground_truth").is_dir():
         return [set_root]
 
@@ -92,11 +89,6 @@ def _iter_image_paths(doc_root: Path, include_root_images: bool) -> list[Path]:
         paths.append(p)
 
     return sorted(paths)
-
-
-# ---------------------------------------------------------------------------
-# Per-image helpers
-# ---------------------------------------------------------------------------
 
 
 def _save_visualization(
@@ -131,12 +123,17 @@ def _save_face_crops(
     global_saved: int,
     max_saved_total: int,
 ) -> tuple[int, list[tuple[int, int, int, int, float]]]:
-    """Extract face crops, save them, return ``(saved_count, faces)``."""
+    """Extract face crops, save them, return ``(saved_count, faces)``.
+
+    ``faces`` covers the same (possibly truncated) set as the crops
+    considered for saving, so callers' counts stay consistent.
+    """
     extracted = detector.extract_faces(image_path, padding=face_padding)
-    faces = [(x, y, w, h, conf) for (_img, (x, y, w, h), conf) in extracted]
 
     if max_faces_per_image > 0:
         extracted = extracted[:max_faces_per_image]
+
+    faces = [(x, y, w, h, conf) for (_img, (x, y, w, h), conf) in extracted]
 
     saved = 0
     for idx, (face_img, _bbox, conf) in enumerate(extracted, 1):
@@ -153,9 +150,141 @@ def _save_face_crops(
     return saved, faces
 
 
-# ---------------------------------------------------------------------------
-# Main runner
-# ---------------------------------------------------------------------------
+def _find_all_doc_roots(root: Path, max_docs: int) -> tuple[list[Path], list[Path]]:
+    """Return (set_roots, doc_roots) under *root*, honoring *max_docs*."""
+    set_roots = _find_set_roots(root)
+    doc_roots: list[Path] = []
+    for sr in set_roots:
+        doc_roots.extend(_find_document_roots(sr))
+    if max_docs > 0:
+        doc_roots = doc_roots[:max_docs]
+    return set_roots, doc_roots
+
+
+def _iter_selected_images(
+    doc_roots: list[Path],
+    max_images_per_doc: int,
+    max_images_total: int,
+    include_root_images: bool,
+) -> Iterable[tuple[Path, Path]]:
+    """Yield (doc_root, image_path) pairs within the configured limits."""
+    processed = 0
+    for doc_root in doc_roots:
+        image_paths = _iter_image_paths(doc_root, include_root_images)
+        if max_images_per_doc > 0:
+            image_paths = image_paths[:max_images_per_doc]
+        print(f"Doc: {doc_root.name} | images_selected={len(image_paths)}")
+
+        for image_path in image_paths:
+            if max_images_total > 0 and processed >= max_images_total:
+                return
+            processed += 1
+            yield doc_root, image_path
+
+
+def _detect_or_save(
+    detector: FaceDetectorDNN,
+    image_path: Path,
+    doc_name: str,
+    save_faces: bool,
+    faces_dir: Path,
+    max_faces_per_image: int,
+    face_padding: float,
+    faces_saved_total: int,
+    max_saved_faces_total: int,
+) -> tuple[list[tuple[int, int, int, int, float]], int]:
+    """Detect faces, or extract and save crops. Returns (faces, crops_saved)."""
+    if not save_faces:
+        return detector.detect_face(image_path), 0
+
+    saved, faces = _save_face_crops(
+        detector,
+        image_path=image_path,
+        out_dir=faces_dir,
+        doc_name=doc_name,
+        max_faces_per_image=max_faces_per_image,
+        face_padding=face_padding,
+        global_saved=faces_saved_total,
+        max_saved_total=max_saved_faces_total,
+    )
+    return faces, saved
+
+
+def _process_one_image(
+    detector: FaceDetectorDNN,
+    doc_root: Path,
+    image_path: Path,
+    stats: RunStats,
+    save_vis: int,
+    results_dir: Path | None,
+    save_faces: bool,
+    faces_dir: Path,
+    max_faces_per_image: int,
+    face_padding: float,
+    max_saved_faces_total: int,
+) -> None:
+    """Process a single image and update *stats*."""
+    stats.processed += 1
+    try:
+        faces, saved = _detect_or_save(
+            detector,
+            image_path,
+            doc_root.name,
+            save_faces,
+            faces_dir,
+            max_faces_per_image,
+            face_padding,
+            stats.faces_saved_total,
+            max_saved_faces_total,
+        )
+    except BlitzIDError as e:
+        stats.failures.append((image_path, str(e)))
+        return
+    except Exception as e:
+        stats.failures.append((image_path, f"Unexpected error: {e}"))
+        return
+
+    stats.ok += 1
+    stats.faces_saved_total += saved
+    stats.faces_per_image.append(len(faces))
+
+    if results_dir is not None and stats.vis_saved < save_vis and faces:
+        tag = f"{doc_root.name}_{image_path.stem}_faces_{len(faces)}"
+        out_path = _save_visualization(detector, image_path, faces, results_dir, tag)
+        stats.vis_saved += 1
+        print(f"  saved_vis: {out_path}")
+
+
+def _print_summary(
+    set_roots: list[Path],
+    doc_roots: list[Path],
+    stats: RunStats,
+    save_faces: bool,
+    faces_dir: Path,
+) -> None:
+    """Print run counters and the first failures."""
+    print("\nSummary:")
+    print(f"  set_roots:           {len(set_roots)}")
+    print(f"  doc_roots:           {len(doc_roots)}")
+    print(f"  images_processed:    {stats.processed}")
+    print(f"  ok:                  {stats.ok}")
+    print(f"  failed:              {len(stats.failures)}")
+    print(f"  faces_total:         {sum(stats.faces_per_image)}")
+    print(f"  vis_saved:           {stats.vis_saved}")
+    if save_faces:
+        print(f"  faces_saved_total:   {stats.faces_saved_total} -> {faces_dir}")
+
+    if stats.faces_per_image:
+        print("  faces/image stats:")
+        print(f"    mean:   {statistics.mean(stats.faces_per_image):.3f}")
+        print(f"    median: {statistics.median(stats.faces_per_image):.3f}")
+        print(f"    max:    {max(stats.faces_per_image)}")
+        print(f"    min:    {min(stats.faces_per_image)}")
+
+    if stats.failures:
+        print("\nFirst failures:")
+        for p, msg in stats.failures[:10]:
+            print(f"- {p}: {msg}")
 
 
 def run(
@@ -179,12 +308,7 @@ def run(
         print(f"Failed to initialise FaceDetectorDNN: {e}")
         return 2
 
-    set_roots = _find_set_roots(root)
-
-    doc_roots: list[Path] = []
-    for sr in set_roots:
-        doc_roots.extend(_find_document_roots(sr))
-
+    set_roots, doc_roots = _find_all_doc_roots(root, max_docs)
     if not doc_roots:
         print(
             f"No MIDV-500 document roots found under: {root}\n"
@@ -192,101 +316,26 @@ def run(
         )
         return 2
 
-    if max_docs > 0:
-        doc_roots = doc_roots[:max_docs]
+    stats = RunStats()
+    for doc_root, image_path in _iter_selected_images(
+        doc_roots, max_images_per_doc, max_images_total, include_root_images
+    ):
+        _process_one_image(
+            detector,
+            doc_root,
+            image_path,
+            stats,
+            save_vis,
+            results_dir,
+            save_faces,
+            faces_dir,
+            max_faces_per_image,
+            face_padding,
+            max_saved_faces_total,
+        )
 
-    failures: list[tuple[Path, str]] = []
-    faces_per_image: list[int] = []
-    vis_saved = 0
-    faces_saved_total = 0
-    processed = 0
-    ok = 0
-
-    for doc_root in doc_roots:
-        image_paths = _iter_image_paths(doc_root, include_root_images)
-        if max_images_per_doc > 0:
-            image_paths = image_paths[:max_images_per_doc]
-
-        print(f"Doc: {doc_root.name} | images_selected={len(image_paths)}")
-
-        for image_path in image_paths:
-            if max_images_total > 0 and processed >= max_images_total:
-                break
-
-            processed += 1
-
-            try:
-                if save_faces:
-                    saved_here, faces = _save_face_crops(
-                        detector,
-                        image_path=image_path,
-                        out_dir=faces_dir,
-                        doc_name=doc_root.name,
-                        max_faces_per_image=max_faces_per_image,
-                        face_padding=face_padding,
-                        global_saved=faces_saved_total,
-                        max_saved_total=max_saved_faces_total,
-                    )
-                    faces_saved_total += saved_here
-                else:
-                    faces_list = detector.detect_face(image_path)
-                    faces = [(x, y, w, h, c) for x, y, w, h, c in faces_list]
-
-                ok += 1
-                faces_per_image.append(len(faces))
-
-                if results_dir is not None and vis_saved < save_vis and faces:
-                    tag = f"{doc_root.name}_{image_path.stem}_faces_{len(faces)}"
-                    out_path = _save_visualization(
-                        detector,
-                        image_path=image_path,
-                        faces=faces,
-                        out_dir=results_dir,
-                        tag=tag,
-                    )
-                    vis_saved += 1
-                    print(f"  saved_vis: {out_path}")
-
-            except BlitzIDError as e:
-                failures.append((image_path, str(e)))
-            except Exception as e:
-                failures.append((image_path, f"Unexpected error: {e}"))
-
-        if max_images_total > 0 and processed >= max_images_total:
-            break
-
-    failed = len(failures)
-    faces_total = sum(faces_per_image)
-
-    print("\nSummary:")
-    print(f"  set_roots:           {len(set_roots)}")
-    print(f"  doc_roots:           {len(doc_roots)}")
-    print(f"  images_processed:    {processed}")
-    print(f"  ok:                  {ok}")
-    print(f"  failed:              {failed}")
-    print(f"  faces_total:         {faces_total}")
-    print(f"  vis_saved:           {vis_saved}")
-    if save_faces:
-        print(f"  faces_saved_total:   {faces_saved_total} -> {faces_dir}")
-
-    if faces_per_image:
-        print("  faces/image stats:")
-        print(f"    mean:   {statistics.mean(faces_per_image):.3f}")
-        print(f"    median: {statistics.median(faces_per_image):.3f}")
-        print(f"    max:    {max(faces_per_image)}")
-        print(f"    min:    {min(faces_per_image)}")
-
-    if failures:
-        print("\nFirst failures:")
-        for p, msg in failures[:10]:
-            print(f"- {p}: {msg}")
-
-    return 0 if failed == 0 else 1
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+    _print_summary(set_roots, doc_roots, stats, save_faces, faces_dir)
+    return 0 if not stats.failures else 1
 
 
 def _parse_log_level(value: str) -> int:

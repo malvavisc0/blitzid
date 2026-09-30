@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -11,108 +9,13 @@ from urllib.request import urlretrieve
 from tqdm import tqdm
 
 
-def calculate_intersect_area(bbox1: list[float], bbox2: list[float]) -> float:
-    """Return the intersection area of two axis-aligned bounding boxes.
-
-    Each bbox is `[xmin, ymin, xmax, ymax]`.
-    """
-
-    x_a = max(bbox1[0], bbox2[0])
-    y_a = max(bbox1[1], bbox2[1])
-    x_b = min(bbox1[2], bbox2[2])
-    y_b = min(bbox1[3], bbox2[3])
-
-    inter_w = max(x_b - x_a, 0.0)
-    inter_h = max(y_b - y_a, 0.0)
-    return inter_w * inter_h
-
-
-def get_bbox_inside_image(
-    label_bbox: list[float], image_bbox: list[float]
-) -> list[float]:
-    """Clamp `label_bbox` so it lies inside `image_bbox`.
-
-    Returns `[xmin, ymin, xmax, ymax]`.
-    """
-
-    x_a = max(label_bbox[0], image_bbox[0])
-    y_a = max(label_bbox[1], image_bbox[1])
-    x_b = min(label_bbox[2], image_bbox[2])
-    y_b = min(label_bbox[3], image_bbox[3])
-    return [x_a, y_a, x_b, y_b]
-
-
-def list_annotation_paths_recursively(
-    directory: str,
-    ignore_background_only_ones: bool = True,
-    image_size: tuple[int, int] = (1080, 1920),
-) -> list[str]:
-    """List per-frame annotation JSON files under `directory`.
-
-    Notes:
-    - MIDV-500 stores annotations as JSON ("quad" polygons) under `ground_truth/`.
-    - If `ignore_background_only_ones` is True, annotations that do not intersect
-      the image at all are discarded.
-
-    Returns:
-        A list of paths relative to `directory`.
-    """
-
-    image_w, image_h = image_size
-    image_bbox = [0.0, 0.0, float(image_w), float(image_h)]
-
-    relative_filepath_list: list[str] = []
-
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if not file.endswith(".json"):
-                continue
-
-            abs_filepath = os.path.join(root, file)
-
-            # Skip sample id-card json like "43_tur_id.json" (dataset-level metadata).
-            if "id" in os.path.basename(abs_filepath):
-                continue
-
-            try:
-                with open(abs_filepath, encoding="utf-8") as json_file:
-                    quad = json.load(json_file)
-                coords = quad["quad"]
-            except (OSError, json.JSONDecodeError, KeyError, TypeError):
-                # Known oddities exist in the dataset (e.g. some malformed JSON files).
-                continue
-
-            label_xmin = min(pos[0] for pos in coords)
-            label_xmax = max(pos[0] for pos in coords)
-            label_ymin = min(pos[1] for pos in coords)
-            label_ymax = max(pos[1] for pos in coords)
-
-            label_bbox = [label_xmin, label_ymin, label_xmax, label_ymax]
-            if ignore_background_only_ones:
-                intersect_area = calculate_intersect_area(label_bbox, image_bbox)
-                if intersect_area < 1.0:
-                    continue
-
-            abs_filepath = abs_filepath.replace("\\", "/")  # for Windows
-            relative_filepath = abs_filepath.split(directory)[-1]
-            if relative_filepath.startswith("/"):
-                relative_filepath = relative_filepath[1:]
-            relative_filepath_list.append(relative_filepath)
-
-    number_of_files = len(relative_filepath_list)
-    folder_name = Path(directory).name
-    print(f"There are {number_of_files} annotation json files in folder {folder_name}.")
-
-    return relative_filepath_list
-
-
 def create_dir(dir_path: str | Path) -> None:
     """Create `dir_path` if it doesn't exist."""
 
     Path(dir_path).mkdir(parents=True, exist_ok=True)
 
 
-class TqdmUpTo(tqdm):
+class TqdmUpTo(tqdm[None]):
     """`tqdm` progress bar compatible with `urllib.request.urlretrieve()` hooks."""
 
     def update_to(self, b: int = 1, bsize: int = 1, tsize: int | None = None) -> None:
@@ -273,6 +176,37 @@ def _is_non_empty_dir(path: Path) -> bool:
         return False
 
 
+def _fetch_one(link: str, dst: Path, skip_existing: bool, cleanup_zip: bool) -> None:
+    """Download and extract one dataset ZIP into `dst`."""
+    print("-" * 70)
+    filename = link.split("/")[-1]
+    zip_path = dst / filename
+    extracted_dir = dst / filename.removesuffix(".zip")
+
+    if skip_existing and _is_non_empty_dir(extracted_dir):
+        print(f"Already extracted -> skipping: {extracted_dir}")
+        return
+
+    if zip_path.exists():
+        print(f"ZIP already present -> skipping download: {zip_path.name}")
+    else:
+        print(f"Downloading: {filename}")
+        download(link, dst)
+        print(f"Downloaded: {filename}")
+
+    print(f"Unzipping: {filename}")
+    unzip(zip_path, dst)
+    print(f"Unzipped: {extracted_dir.name}")
+
+    if cleanup_zip:
+        try:
+            zip_path.unlink()
+            print(f"Removed ZIP: {zip_path.name}")
+        except OSError:
+            # Non-fatal; leave the ZIP behind if deletion fails.
+            pass
+
+
 def download_dataset(
     download_dir: str | Path,
     dataset_name: str = "midv500",
@@ -293,52 +227,14 @@ def download_dataset(
         cleanup_zip: Delete the downloaded ZIP after successful extraction.
     """
 
-    # Inline branching (instead of `_iter_zip_links()`) keeps older Pylint versions
-    # happy about definite assignment.
-    if dataset_name == "midv500":
-        links_set: dict[str, list[str]] = {"midv500": midv500_links}
-    elif dataset_name == "midv2019":
-        links_set = {"midv2019": midv2019_links}
-    elif dataset_name == "all":
-        links_set = {"midv500": midv500_links, "midv2019": midv2019_links}
-    else:
-        raise ValueError('Invalid dataset_name. Use "midv500", "midv2019" or "all".')
-
     base = Path(download_dir)
 
-    for set_name, links in links_set.items():
+    for set_name, links in _iter_zip_links(dataset_name).items():
         dst = base / set_name
         dst.mkdir(parents=True, exist_ok=True)
 
         for link in links:
-            print("-" * 70)
-            link = link.replace("\\", "/")  # for Windows
-            filename = link.split("/")[-1]
-            zip_path = dst / filename
-            extracted_dir = dst / filename.removesuffix(".zip")
-
-            if skip_existing and _is_non_empty_dir(extracted_dir):
-                print(f"Already extracted -> skipping: {extracted_dir}")
-                continue
-
-            if zip_path.exists():
-                print(f"ZIP already present -> skipping download: {zip_path.name}")
-            else:
-                print(f"Downloading: {filename}")
-                download(link, dst)
-                print(f"Downloaded: {filename}")
-
-            print(f"Unzipping: {filename}")
-            unzip(zip_path, dst)
-            print(f"Unzipped: {extracted_dir.name}")
-
-            if cleanup_zip:
-                try:
-                    zip_path.unlink()
-                    print(f"Removed ZIP: {zip_path.name}")
-                except OSError:
-                    # Non-fatal; leave the ZIP behind if deletion fails.
-                    pass
+            _fetch_one(link, dst, skip_existing, cleanup_zip)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

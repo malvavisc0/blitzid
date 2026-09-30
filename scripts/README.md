@@ -8,6 +8,10 @@ extra; OCR demos need the `ocr` extra).
 Model weights (SCRFD, PP-OCR) download on first use into the
 platformdirs cache — never into the repo.
 
+All output-producing scripts write into a results directory (default
+`results/`, gitignored local artifact) in addition to printing:
+face crops and visualizations, OCR lines, benchmark tables.
+
 ## `face_detector_demo.py` — face detection demo
 
 Single-image or batch runs over `images/`, using the shared CLI in
@@ -27,7 +31,8 @@ uv run python scripts/face_detector_demo.py
 
 ## `ocr_demo.py` — OCR text reading demo (needs `ocr` extra)
 
-Prints every recognized text line with bbox and confidence.
+Prints every recognized text line with bbox and confidence, and writes
+them to `results/ocr-<image>-<timestamp>.md`.
 
 ```bash
 uv run python scripts/ocr_demo.py --image images/nl_td1_id_specimen.jpg

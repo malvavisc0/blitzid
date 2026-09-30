@@ -1,7 +1,7 @@
 [project]
 name = "blitzid"
 version = "0.1.0"
-description = "Modular DNN-based face detection framework with optional CUDA acceleration"
+description = "Modular DNN-based face detection framework optimized for CPU deployment"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -19,16 +19,13 @@ classifiers = [
 # ── Core dependencies (always installed) ───────────────────
 dependencies = [
     "numpy",
-    "opencv-python",
+    "onnxruntime",
+    "opencv-python-headless>=5",
     "platformdirs",
 ]
 
 # ── Optional dependency groups ─────────────────────────────
 [project.optional-dependencies]
-deepface = [
-    "deepface",
-    "tf-keras",
-]
 scripts = [
     "tqdm",
 ]
@@ -37,9 +34,11 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
+    "tqdm",
+    "types-tqdm",
 ]
 all = [
-    "blitzid[deepface,scripts,dev]",
+    "blitzid[scripts,dev]",
 ]
 
 # ── Build system ───────────────────────────────────────────
@@ -82,3 +81,8 @@ testpaths = ["tests"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+[[tool.mypy.overrides]]
+# PIL is an optional user-installed dependency (lazy-imported in _image.py).
+module = ["PIL", "PIL.*"]
+ignore_missing_imports = true

@@ -2,14 +2,8 @@
 
 This repository keeps the `models/` directory **but does not commit the actual model weights** to keep the repo size small.
 
-## OpenCV DNN face detector (Caffe)
+## SCRFD-2.5G face detector (ONNX)
 The face-detector backend uses:
-- `models/deploy.prototxt`
-- `models/res10_300x300_ssd_iter_140000.caffemodel`
+- `scrfd_2.5g.onnx` — InsightFace `buffalo_m` detection weights (SCRFD-2.5G)
 
-These files are downloaded automatically by [`framework.models.ModelManager`](framework/models.py:14) when missing (unless downloads are disabled).
-
-## DeepFace weights
-When using the DeepFace backend, weights are downloaded on first use and stored under `models/deepface/` (the code sets `DEEPFACE_HOME` to keep downloads repo-local).
-
-If you want to pre-download weights, just run the DeepFace pipeline once; the files will appear under `models/deepface/` and remain ignored by git.
+This file is downloaded automatically by [`ModelManager`](../src/blitzid/_models.py) when missing (unless downloads are disabled) and stored under the platformdirs user cache (`user_cache_dir("blitzid")/models/`). Pass `model_dir=Path("models")` to `FaceDetectorDNN` to keep weights here instead.

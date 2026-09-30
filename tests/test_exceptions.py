@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from blitzid import (
     BlitzIDError,
-    CUDAConfigError,
     FaceDetectorError,
     ImageError,
     ImageLoadError,
@@ -12,7 +11,6 @@ from blitzid import (
     InvalidParameterError,
     ModelDownloadError,
     ModelError,
-    OptionalDependencyError,
 )
 
 
@@ -40,11 +38,5 @@ class TestBackwardCompatAliases:
     def test_image_processing_error(self) -> None:
         assert ImageProcessingError is ImageError
 
-    def test_cuda_config_error(self) -> None:
-        assert CUDAConfigError is ModelError
-
     def test_invalid_parameter_error(self) -> None:
         assert InvalidParameterError is BlitzIDError
-
-    def test_optional_dependency_error(self) -> None:
-        assert OptionalDependencyError is BlitzIDError

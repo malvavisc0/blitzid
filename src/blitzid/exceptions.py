@@ -11,3 +11,7 @@ class ModelError(BlitzIDError):
 
 class ImageError(BlitzIDError):
     """Image loading, validation, or processing failure."""
+
+
+class MRZError(BlitzIDError):
+    """MRZ not found, malformed, or failed check-digit validation."""

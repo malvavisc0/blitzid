@@ -119,17 +119,26 @@ Write the simplest correct solution. Delete anything that isn't needed.
 - Public API lives in `src/blitzid/__init__.py` — every new public
   symbol goes there, into `__all__`, and into the README API table.
   Backward-compat aliases also live there (see the old exception names).
-- Internal helpers: `src/blitzid/_image.py` (input loading and
-  normalization), `src/blitzid/_models.py` (`ModelManager` — SCRFD ONNX
-  download + CPU `onnxruntime.InferenceSession`, default cache dir via
-  `platformdirs`), `src/blitzid/_face.py` (`Face`, `DetectionMetrics`,
-  cache, drawing), `src/blitzid/_scrfd.py` (SCRFD preprocess/decode),
-  NMS / IoU / size filter in `src/blitzid/detector.py`.
+- Layout: two domain subpackages over shared infra. Face detection in
+  `src/blitzid/face/` (`detector.py` — `FaceDetectorDNN` plus NMS /
+  IoU / size filter; `_face.py` — `Face`, `DetectionMetrics`, cache,
+  drawing; `_scrfd.py` — SCRFD preprocess/decode). Document reading in
+  `src/blitzid/reading/` (`ocr.py`, `mrz.py`). Shared helpers at the
+  top level: `_image.py` (input loading and normalization), `_models.py`
+  (`ModelManager` — SCRFD ONNX download + CPU
+  `onnxruntime.InferenceSession`, default cache dir via `platformdirs`).
+  Subpackage `__init__.py` files hold no re-exports — the only public
+  import path is the package root.
 - Exceptions in `src/blitzid/exceptions.py`: `BlitzIDError` base,
   `ModelError` (model download/load), `ImageError` (load/validate/
   process).
-- Optional deps (PIL) are lazy-imported inside functions, guarded, with
-  targeted `# type: ignore` codes; core must work without them.
+- Optional deps (PIL, rapidocr via the `ocr` extra) are lazy-imported
+  inside functions, guarded, with targeted `# type: ignore` codes; core
+  must work without them.
+- The MRZ layer (`src/blitzid/reading/mrz.py`) is pure ICAO 9303 logic
+  over the OCR reader's text lines — no new models, no fuzzy OCR-error
+  correction: check digits and letter-only field validation gate
+  everything, and a failing field raises `MRZError`.
 - Images normalize to 3-channel BGR `np.ndarray`; `ImageInput` is
   `path | ndarray | PIL Image`. SCRFD runs letterboxed at `det_size`
   (default 640×640, multiples of 32); boxes map back to original image
@@ -141,7 +150,9 @@ Write the simplest correct solution. Delete anything that isn't needed.
 - Public detector surface: `detect_face`, `detect_face_landmarks`,
   `detect_face_with_metrics`, `extract_faces`, `visualize_detections`,
   `detect_faces_batch`. Landmarks follow SCRFD order (right eye, left
-  eye, nose tip, right mouth corner, left mouth corner).
+  eye, nose tip, right mouth corner, left mouth corner). The OCR surface
+  is `RapidOCRReader.read()` returning `OCRText` records — one engine
+  (RapidOCR on onnxruntime CPU), lazy-imported from the `ocr` extra.
 - `scripts/` are demos, diagnostics, and dataset benchmarks — not part
   of the shipped package; they may use the `scripts` extra.
 - Tests go in `tests/`; validation tests must run without model

@@ -26,6 +26,9 @@ dependencies = [
 
 # ── Optional dependency groups ─────────────────────────────
 [project.optional-dependencies]
+ocr = [
+    "rapidocr",
+]
 scripts = [
     "tqdm",
 ]
@@ -38,13 +41,18 @@ dev = [
     "types-tqdm",
 ]
 all = [
-    "blitzid[scripts,dev]",
+    "blitzid[ocr,scripts,dev]",
 ]
 
 # ── Build system ───────────────────────────────────────────
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+# rapidocr requires the GUI `opencv-python`; we already ship
+# `opencv-python-headless` (same `cv2` module), so drop the duplicate.
+override-dependencies = ["opencv-python; sys_platform == 'never'"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/blitzid"]
@@ -83,6 +91,8 @@ python_version = "3.12"
 strict = true
 
 [[tool.mypy.overrides]]
-# PIL is an optional user-installed dependency (lazy-imported in _image.py).
-module = ["PIL", "PIL.*"]
+# Optional user-installed dependencies, lazy-imported inside guarded
+# methods (PIL in _image.py, rapidocr in ocr.py): absent in core-only
+# installs, so there is nothing to type-check against there.
+module = ["PIL", "PIL.*", "rapidocr", "rapidocr.*"]
 ignore_missing_imports = true

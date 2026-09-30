@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `MRZReader` / `MRZRecord` / `MRZError`: ICAO 9303 machine-readable zone
+  reading on top of the `ocr` extra. Selects MRZ lines from OCR output
+  (30/36/44 chars over the MRZ charset, reassembled by bbox position),
+  validates every check digit plus the letter-only fields (document
+  code, issuer, nationality — the ones without check-digit protection),
+  and parses TD1, TD2, and TD3 layouts. No fuzzy OCR-error correction:
+  an unreadable zone raises `MRZError` with the failing field.
+- `RapidOCRReader` / `OCRText` and the `blitzid[ocr]` extra: OCR text
+  reading for ID documents via RapidOCR (PP-OCR ONNX models on
+  onnxruntime CPU). Models download on first use to
+  `user_cache_dir("blitzid")/models/rapidocr`; `read()` returns text
+  lines sorted by confidence. Core installs stay OCR-free.
+  `scripts/ocr_demo.py` demonstrates the reader from the CLI.
 - `detect_face_landmarks()`, returning the new frozen `Face` dataclass
   (`bbox`, `confidence`, `landmarks`). SCRFD decodes its 5-point keypoint
   head — right eye, left eye, nose tip, right mouth corner, left mouth

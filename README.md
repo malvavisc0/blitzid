@@ -16,13 +16,21 @@ Modular DNN-based face detection framework, optimized for CPU deployment.
 - **Factory presets** — `create_fast_detector`, `create_accurate_detector`, `create_balanced_detector`
 - **Batch processing** — `detect_faces_batch` for directory-level pipelines
 - **Visualization** — bounding-box overlay with confidence labels
+- **OCR (extra)** — `RapidOCRReader` reads text lines from documents via `pip install blitzid[ocr]`
+- **MRZ (extra)** — `MRZReader` parses the ICAO 9303 machine-readable zone (TD1/TD2/TD3) with check-digit validation
 - **Flexible input** — accepts file paths, NumPy arrays, and PIL Images
 
 ## Installation
 
 ```bash
 pip install blitzid          # or: uv add blitzid
+pip install blitzid[ocr]     # with OCR text reading (RapidOCR)
 ```
+
+Note: under plain `pip`, RapidOCR pulls in the GUI `opencv-python`
+alongside this package's `opencv-python-headless` (both provide `cv2`).
+Prefer `uv` — its lockfile overrides the duplicate away. With `pip`,
+uninstalling `opencv-python` afterwards keeps a working headless `cv2`.
 
 ## Quick Start
 
@@ -48,7 +56,7 @@ All public symbols are exported from [`blitzid`](src/blitzid/__init__.py).
 
 ### `FaceDetectorDNN`
 
-Defined in [`detector.py`](src/blitzid/detector.py). The primary SCRFD-based detector (CPU inference via onnxruntime).
+Defined in [`face/detector.py`](src/blitzid/face/detector.py). The primary SCRFD-based detector (CPU inference via onnxruntime).
 
 | Method | Description |
 |---|---|
@@ -68,7 +76,7 @@ Defined in [`detector.py`](src/blitzid/detector.py). The primary SCRFD-based det
 
 ### `Face`
 
-Frozen dataclass defined in [`_face.py`](src/blitzid/_face.py), returned by `detect_face_landmarks`.
+Frozen dataclass defined in [`face/_face.py`](src/blitzid/face/_face.py), returned by `detect_face_landmarks`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -78,7 +86,7 @@ Frozen dataclass defined in [`_face.py`](src/blitzid/_face.py), returned by `det
 
 ### `DetectionMetrics`
 
-Dataclass defined in [`_face.py`](src/blitzid/_face.py).
+Dataclass defined in [`face/_face.py`](src/blitzid/face/_face.py).
 
 | Field | Type | Description |
 |---|---|---|
@@ -89,6 +97,51 @@ Dataclass defined in [`_face.py`](src/blitzid/_face.py).
 | `num_faces` | `int` | Number of faces detected |
 | `cache_hit` | `bool` | Whether the result came from cache |
 
+### `RapidOCRReader`
+
+Defined in [`reading/ocr.py`](src/blitzid/reading/ocr.py); requires the `ocr` extra
+(`pip install blitzid[ocr]`). Reads text lines from document images via
+RapidOCR (PP-OCR ONNX models on onnxruntime CPU).
+
+| Method | Description |
+|---|---|
+| `read(image_input)` | Returns `list[OCRText]` sorted by confidence |
+
+**`OCRText`** — frozen dataclass: `bbox` `(x, y, w, h)` in image pixels,
+`text` (recognized string), `confidence` in `[0, 1]`.
+
+```python
+from blitzid import RapidOCRReader
+
+reader = RapidOCRReader()
+for line in reader.read("id_card.jpg"):
+    print(line.text, line.confidence)
+```
+
+### `MRZReader`
+
+Defined in [`reading/mrz.py`](src/blitzid/reading/mrz.py); requires the `ocr` extra.
+Selects MRZ lines from OCR text, validates them via ICAO 9303 check
+digits, and parses TD1 (3x30, ID cards), TD2 (2x36), and TD3 (2x44,
+passports) zones. No fuzzy OCR-error correction — a zone whose check
+digits or letter-only fields fail raises `MRZError`.
+
+| Method | Description |
+|---|---|
+| `read(image_input)` | Returns an `MRZRecord` |
+
+**`MRZRecord`** — frozen dataclass: `mrz_type`, `document_code`,
+`issuer`, `document_number`, `birth_date` (YYMMDD), `sex` (`M`/`F`/`X`),
+`expiry_date` (YYMMDD), `nationality`, `surname`, `given_names`,
+`optional_data1`, `optional_data2`.
+
+```python
+from blitzid import MRZReader
+
+record = MRZReader().read("id_card.jpg")
+print(record.mrz_type, record.document_number, record.surname)
+```
+
 ### Exceptions
 
 Defined in [`exceptions.py`](src/blitzid/exceptions.py).
@@ -98,6 +151,7 @@ Defined in [`exceptions.py`](src/blitzid/exceptions.py).
 | `BlitzIDError` | Base exception for all blitzid errors |
 | `ModelError` | Model download or load failure |
 | `ImageError` | Image loading, validation, or processing failure |
+| `MRZError` | MRZ not found, malformed, or failed check-digit validation |
 
 Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `ImageLoadError`, etc.) are re-exported from `__init__.py`.
 
@@ -105,7 +159,9 @@ Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `Imag
 
 ```mermaid
 graph TD
-    A[blitzid] --> B[detector.py<br/>FaceDetectorDNN]
+    A[blitzid] --> B[face/detector.py<br/>FaceDetectorDNN]
+    A --> C[reading/ocr.py<br/>RapidOCRReader]
+    A --> I[reading/mrz.py<br/>MRZReader]
     A --> D[exceptions.py<br/>BlitzIDError · ModelError · ImageError]
 
     B --> E[_models.py<br/>ModelManager · auto-download]
@@ -124,6 +180,10 @@ fallback to other models or providers — a missing or unloadable model
 raises `ModelError`. Inference input size is configurable via `det_size`
 (default `640x640`, multiples of 32); images are letterboxed to preserve
 aspect ratio and boxes are mapped back to original image coordinates.
+
+`RapidOCRReader` runs RapidOCR's **PP-OCR** ONNX models (detection,
+classification, recognition) through the same onnxruntime CPU profile,
+with weights cached under `user_cache_dir("blitzid")/models/rapidocr`.
 
 ## Development
 
@@ -149,6 +209,13 @@ A CLI demo script is included at [`scripts/face_detector_demo.py`](scripts/face_
 # Balanced preset on a single image
 python scripts/face_detector_demo.py --preset balanced --run all \
     --image images/bub_der_personalausweis_kopie.jpg
+```
+
+An OCR demo is available at [`scripts/ocr_demo.py`](scripts/ocr_demo.py)
+(requires `blitzid[ocr]`):
+
+```bash
+python scripts/ocr_demo.py --image images/bub_der_personalausweis_kopie.jpg
 ```
 
 ## License

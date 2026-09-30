@@ -18,13 +18,16 @@ Modular DNN-based ID document reading framework — face detection, OCR text rea
 - **Visualization** — bounding-box overlay with confidence labels
 - **OCR (extra)** — `RapidOCRReader` reads text lines from documents via `pip install blitzid[ocr]`
 - **MRZ (extra)** — `MRZReader` parses the ICAO 9303 machine-readable zone (TD1/TD2/TD3) with check-digit validation
+- **Document QC** — `DocumentCropper` locates the document quad, warps it flat, and quality-checks the crop
+- **HTTP API + Docker (`api` extra)** — async job queue (RAM-only Redis) over face/OCR/MRZ, synchronous `/crop` QC, `docker compose up`
 - **Flexible input** — accepts file paths, NumPy arrays, and PIL Images
 
 ## Installation
 
 ```bash
-pip install blitzid          # or: uv add blitzid
-pip install blitzid[ocr]     # with OCR text reading (RapidOCR)
+pip install blitzid           # or: uv add blitzid
+pip install blitzid[ocr]      # with OCR text reading (RapidOCR)
+pip install blitzid[api]      # with the HTTP API server
 ```
 
 Note: under plain `pip`, RapidOCR pulls in the GUI `opencv-python`
@@ -142,6 +145,22 @@ record = MRZReader().read("id_card.jpg")
 print(record.mrz_type, record.document_number, record.surname)
 ```
 
+### `DocumentCropper`
+
+Defined in [`reading/document.py`](src/blitzid/reading/document.py). Pure-CV document localization and QC: finds the largest plausible document quad (Canny edges + contour approximation), warps it into an axis-aligned canonical crop at the quad's own aspect, and quality-checks the crop (thresholds are documented module constants).
+
+| Method | Description |
+|---|---|
+| `crop(image_input, side="unknown")` | Returns `(crop, QualityReport)`; crop is None when no document was found |
+
+**`QualityReport`** — frozen dataclass: `quad` (corners clockwise from
+top-left, or None), `width`, `height`, `side`, `face_found`, `checks`
+(each `pass` / `warn` / `fail` / `n/a`), `verdict` (`pass` — no fail,
+`warn` — warns only, `reject` — any fail). The optional `detector`
+constructor argument (a `FaceDetectorDNN`) enables the side-aware
+`face_present` check: `front` without a face warns, `back` is not
+expected (TD1 MRZ lives there), without a detector the check is `n/a`.
+
 ### Exceptions
 
 Defined in [`exceptions.py`](src/blitzid/exceptions.py).
@@ -155,6 +174,71 @@ Defined in [`exceptions.py`](src/blitzid/exceptions.py).
 
 Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `ImageLoadError`, etc.) are re-exported from `__init__.py`.
 
+## HTTP API
+
+The `api` extra (`pip install blitzid[api]`) adds an HTTP service over
+the library: async jobs for the analyses, a synchronous document-QC
+endpoint, and a health check. Docker is the primary deployment — the
+image bakes all weights (~33 MB) for instant cold start and talks to
+a RAM-only Redis:
+
+```bash
+docker compose up
+curl http://localhost:8000/health
+```
+
+**POST /analyze** — submit a job (`multipart/form-data`): an `image`
+file (any OpenCV-decodable format; PDFs get a precise `415`) and
+`types` (repeated and/or comma-separated: `face`, `ocr`, `mrz`).
+Validation is eager, before the job exists: `422` unknown type or
+missing fields, `400` undecodable bytes or an analysis whose engine
+is unavailable (`ocr`/`mrz` without the `ocr` extra), `413` above the
+upload cap, `503` + `Retry-After` when the queue is full or Redis is
+down. Accepted jobs return `202`:
+
+```bash
+curl -F image=@id.jpg -F types=face,ocr localhost:8000/analyze
+# {"job_id": "<uuid>", "status": "queued", "status_url": "/jobs/<uuid>"}
+```
+
+**GET /jobs/{job_id}** — poll: `{"status": "queued"}` / `running`;
+done returns `200` with one section per requested type (`face`,
+`ocr`, `mrz`; a failing section carries `{"error": ...}` while the
+others still return). The read claims the result — every later read
+gets `410 Gone`; unknown ids get `404`; results expire after
+`BLITZID_API_JOB_TTL_SECONDS` (default 900).
+
+**POST /crop** — synchronous document QC (contour detection + one
+SCRFD pass runs in tens of ms): the perspective-corrected canonical
+crop plus quality checks (`document_found`, `aspect_ratio`,
+`resolution`, `sharpness`, `brightness`, and the side-aware
+`face_present`, which never fails a document). Optional `side` field
+(`front` / `back` / `unknown`):
+
+```bash
+curl -F image=@id.jpg localhost:8000/crop
+# {"quad": [...], "crop_base64": "...", "width": 856, "height": 540,
+#  "side": "unknown", "face_found": true, "checks": {...},
+#  "verdict": "pass"}
+```
+
+The crop is the canonical image to keep and to re-submit to
+`/analyze` for cleaner OCR/MRZ.
+
+**GET /health** — engine, Redis, and job availability for container
+orchestration.
+
+Privacy: uploads and results live in RAM end to end — Redis runs with
+persistence disabled, results are claim-once and TTL-bounded, and the
+service itself never writes to disk. Knobs live in
+[`.env.example`](.env.example) (`BLITZID_API_REDIS_URL`,
+`BLITZID_API_MAX_UPLOAD_MB`, `BLITZID_API_JOB_TTL_SECONDS`,
+`BLITZID_API_MAX_QUEUED_JOBS`, `BLITZID_API_MAX_CONCURRENT_JOBS`,
+`BLITZID_API_JOB_LEASE_SECONDS`). Every `v*` tag push publishes
+`ghcr.io/malvavisc0/blitzid` (amd64), gated on the full CI gate plus a
+compose smoke test; new GHCR packages are private by default — make
+the package public or `docker login ghcr.io` to pull.
+
 ## Architecture
 
 ```mermaid
@@ -162,6 +246,7 @@ graph TD
     A[blitzid] --> B[face/detector.py<br/>FaceDetectorDNN]
     A --> I[reading/mrz.py<br/>MRZReader]
     A --> C[reading/ocr.py<br/>RapidOCRReader]
+    A --> M[reading/document.py<br/>DocumentCropper · QualityReport]
     A --> D[exceptions.py<br/>BlitzIDError · ModelError · ImageError · MRZError]
 
     I --> C
@@ -171,8 +256,12 @@ graph TD
     B --> H[face/_scrfd.py<br/>decode · letterbox]
     C --> E
     C --> F
+    M --> F
     H --> G
 ```
+
+The optional HTTP API lives in `src/blitzid/api/` (`api` extra) — not
+part of the library import graph above.
 
 ## Model
 

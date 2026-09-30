@@ -6,6 +6,35 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- HTTP API (`blitzid[api]` extra: fastapi, uvicorn, python-multipart,
+  redis) exposing the analyses as async jobs: `POST /analyze`
+  (multipart upload + `types` form field; eager validation with
+  422/400/413/415/503), `GET /jobs/{id}` (claim-once results via
+  GETDEL — later reads get `410 Gone`; TTL-bounded), `GET /health`
+  for orchestration. Jobs run in per-process worker threads bounded by
+  `BLITZID_API_MAX_CONCURRENT_JOBS` with per-engine locks; a Redis
+  queue (persistence off — RAM only) with cap, TTL, and a claim-lease
+  sweeper that re-runs jobs abandoned by crashed workers. Env knobs:
+  `BLITZID_API_REDIS_URL`, `BLITZID_API_MAX_UPLOAD_MB`,
+  `BLITZID_API_JOB_TTL_SECONDS`, `BLITZID_API_MAX_QUEUED_JOBS`,
+  `BLITZID_API_MAX_CONCURRENT_JOBS`, `BLITZID_API_JOB_LEASE_SECONDS`.
+- Docker deployment: multi-stage `Dockerfile` (weights baked to
+  `/models`, non-root, python-urllib HEALTHCHECK) and
+  `docker-compose.yml` (api + RAM-only `redis:8-alpine` with
+  persistence disabled). Tag pushes publish
+  `ghcr.io/malvavisc0/blitzid` via `.github/workflows/docker.yml`,
+  gated on the (now reusable) CI gate plus a compose smoke test that
+  submits a real face/ocr/mrz job and polls it to completion.
+- `DocumentCropper` / `QualityReport` (reading domain, pure CV):
+  locates the largest plausible document quad via Canny edges +
+  contour approximation, warps it into an axis-aligned canonical crop
+  at the quad's own aspect, and quality-checks it (`document_found`,
+  `aspect_ratio` near ID-1/ID-3, `resolution`, `sharpness`,
+  `brightness`, side-aware `face_present` — never fails a document).
+  Optional `FaceDetectorDNN` injection powers the face check
+  (`front` + no face → warn; `back` → not expected) without adding a
+  runtime `reading → face` dependency. The `POST /crop` API endpoint
+  wraps it: QC verdict plus the canonical `crop_base64` JPEG.
 - `BLITZID_MODELS_DIR` environment variable: relocates all model-weight
   downloads (SCRFD + RapidOCR) when set; defaults to the platformdirs
   user cache as before. `scripts/download_models.py` pre-fetches all

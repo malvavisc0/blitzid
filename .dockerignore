@@ -1,0 +1,9 @@
+.git
+.venv
+.kilo
+.env
+models/
+images/
+results/
+__pycache__/
+*.pyc

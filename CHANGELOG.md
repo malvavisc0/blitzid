@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `BLITZID_MODELS_DIR` environment variable: relocates all model-weight
+  downloads (SCRFD + RapidOCR) when set; defaults to the platformdirs
+  user cache as before. `scripts/download_models.py` pre-fetches all
+  weights into a directory (default `models/`) for Docker images.
 - `MRZReader` / `MRZRecord` / `MRZError`: ICAO 9303 machine-readable zone
   reading on top of the `ocr` extra. Selects MRZ lines from OCR output
   (30/36/44 chars over the MRZ charset, reassembled by bbox position),
@@ -60,6 +64,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Model download no longer raises `ModelError` after a successful transfer:
+  the post-download size log stat'ed the already-renamed `.tmp` file. Only
+  affected fresh installs (cached models never re-downloaded).
 - Detection cache keys now cover image `shape` and `dtype` in addition to
   pixel bytes — arrays sharing byte content but differing in layout no
   longer collide on one cached result.

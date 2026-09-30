@@ -30,6 +30,22 @@ class TestDefaultModelDir:
         assert result.name == "weights"
         assert "models" in str(result)
 
+    def test_env_override(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("BLITZID_MODELS_DIR", str(tmp_path))
+        result = default_model_dir()
+        assert result == tmp_path
+        assert result.is_dir()
+
+    def test_env_override_subdir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("BLITZID_MODELS_DIR", str(tmp_path))
+        result = default_model_dir("rapidocr")
+        assert result == tmp_path / "rapidocr"
+        assert result.is_dir()
+
 
 class TestModelManager:
     def test_downloads_disabled_raises(self, tmp_path: Path) -> None:

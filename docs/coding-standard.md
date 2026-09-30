@@ -7,14 +7,16 @@ intentions. Skip explanations unless explicitly asked. Never narrate
 tool use. Answer the question; move on.
 
 ## Project
-blitzid — modular DNN-based face detection framework. A typed Python
-library (`blitzid`, src layout) built on the SCRFD-2.5G ONNX model
-(InsightFace `buffalo_m` detection weights, auto-downloaded), run via
-an onnxruntime CPU session. Includes LRU result cache, multi-scale
+blitzid — modular DNN-based ID document reading framework, optimized
+for CPU. A typed Python library (`blitzid`, src layout) with two
+layers. Face detection (`src/blitzid/face/`): SCRFD-2.5G ONNX model
+(InsightFace `buffalo_m` detection weights, auto-downloaded) run via
+an onnxruntime CPU session, with LRU result cache, multi-scale
 detection, NMS + size filtering, batch processing, and bbox
-visualization. Inputs are file paths, NumPy arrays, or PIL Images;
-outputs are `(x, y, w, h, confidence)` tuples and crops. Direction:
-document (ID card / license) reading, starting with face detection.
+visualization. Document reading (`src/blitzid/reading/`): RapidOCR
+text lines (`ocr` extra) and ICAO 9303 MRZ parsing (TD1/TD2/TD3).
+Inputs are file paths, NumPy arrays, or PIL Images; outputs are
+`(x, y, w, h, confidence)` tuples and crops.
 
 ## Stack
 - python 3.12+ (CI matrix: 3.12 / 3.13 / 3.14), uv, pyproject.toml
@@ -80,7 +82,7 @@ docs, plans, examples, or commit messages. Rules:
   scans of real documents or photos of living people.
 - Datasets (e.g. MIDV-500) are fetched at runtime into cache dirs by
   `scripts/`; never commit downloaded samples or model weights
-  (`models/` holds only README/.gitkeep).
+  (`models/` weights are gitignored — only README/.gitkeep are tracked).
 - Before committing anything touched by real imagery, check the diff:
   `git diff --stat` and open every added binary. If it shows a living
   person's face or a real document, it does not go in the repo.
@@ -131,7 +133,8 @@ Write the simplest correct solution. Delete anything that isn't needed.
   import path is the package root.
 - Exceptions in `src/blitzid/exceptions.py`: `BlitzIDError` base,
   `ModelError` (model download/load), `ImageError` (load/validate/
-  process).
+  process), `MRZError` (MRZ not found / malformed / failed check-digit
+  validation).
 - Optional deps (PIL, rapidocr via the `ocr` extra) are lazy-imported
   inside functions, guarded, with targeted `# type: ignore` codes; core
   must work without them.
@@ -142,17 +145,21 @@ Write the simplest correct solution. Delete anything that isn't needed.
 - Images normalize to 3-channel BGR `np.ndarray`; `ImageInput` is
   `path | ndarray | PIL Image`. SCRFD runs letterboxed at `det_size`
   (default 640×640, multiples of 32); boxes map back to original image
-  coordinates. Model weights download on demand to the user cache dir —
-  never into the repo.
+  coordinates. Model weights download on demand to the default models
+  dir — `BLITZID_MODELS_DIR` when set, else the `platformdirs` user
+  cache — never into the repo. `scripts/download_models.py` pre-fetches
+  all weights for Docker images.
 - No fallbacks between models or providers: exactly one SCRFD model on
   the explicit `CPUExecutionProvider`; anything missing or unloadable
   raises `ModelError`.
 - Public detector surface: `detect_face`, `detect_face_landmarks`,
   `detect_face_with_metrics`, `extract_faces`, `visualize_detections`,
   `detect_faces_batch`. Landmarks follow SCRFD order (right eye, left
-  eye, nose tip, right mouth corner, left mouth corner). The OCR surface
-  is `RapidOCRReader.read()` returning `OCRText` records — one engine
-  (RapidOCR on onnxruntime CPU), lazy-imported from the `ocr` extra.
+  eye, nose tip, right mouth corner, left mouth corner). The OCR
+  surface is `RapidOCRReader.read()` returning `OCRText` records — one
+  engine (RapidOCR on onnxruntime CPU), lazy-imported from the `ocr`
+  extra. The MRZ surface is `MRZReader.read()` returning an
+  `MRZRecord` (same `ocr` extra).
 - `scripts/` are demos, diagnostics, and dataset benchmarks — not part
   of the shipped package; they may use the `scripts` extra.
 - Tests go in `tests/`; validation tests must run without model

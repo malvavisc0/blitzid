@@ -1,18 +1,34 @@
 # Models
 
-This repository keeps the `models/` directory **but does not commit the actual model weights** to keep the repo size small.
+Local, gitignored storage for downloaded model weights — the repo commits
+only this README and a `.gitkeep`.
 
-## SCRFD-2.5G face detector (ONNX)
-The face-detector backend uses:
-- `scrfd_2.5g.onnx` — InsightFace `buffalo_m` detection weights (SCRFD-2.5G)
+Populate with:
 
-This file is downloaded automatically by [`ModelManager`](../src/blitzid/_models.py) when missing (unless downloads are disabled) and stored under the platformdirs user cache (`user_cache_dir("blitzid")/models/`). Pass `model_dir=Path("models")` to `FaceDetectorDNN` to keep weights here instead.
+```bash
+python scripts/download_models.py            # -> ./models/
+python scripts/download_models.py --models-dir /models
+```
 
-## RapidOCR text reading (ONNX)
+## Layout
 
-`RapidOCRReader` ([`src/blitzid/reading/ocr.py`](../src/blitzid/reading/ocr.py), `ocr`
-extra) downloads three PP-OCR-derived ONNX models on first use
-(text detection, direction classification, text recognition) via
-RapidOCR's downloader into `user_cache_dir("blitzid")/models/rapidocr/`
-— redirected from RapidOCR's in-package default so weights never land
-in the repo or site-packages. Pass `model_dir` to override the location.
+- `scrfd_2.5g.onnx` — SCRFD-2.5G face detector (InsightFace `buffalo_m`
+  detection weights); managed by
+  [`ModelManager`](../src/blitzid/_models.py).
+- `rapidocr/` — PP-OCR text detection, direction classification, and text
+  recognition models (the `ocr` extra); managed by RapidOCR's downloader,
+  redirected from its in-package default.
+
+## Default location
+
+When unset, weights download on first use to the `platformdirs` user cache
+(`~/.cache/blitzid/models/` on Linux). Set `BLITZID_MODELS_DIR` to
+relocate all models (e.g. a Docker volume), or pass `model_dir=` to
+`FaceDetectorDNN` / `RapidOCRReader` for per-instance control.
+
+## Docker
+
+Either bake the weights into the image by running the download script
+during `docker build`, or mount a volume at `/models` and set
+`BLITZID_MODELS_DIR=/models` so containers share one copy instead of
+re-downloading on every start.

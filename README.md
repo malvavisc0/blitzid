@@ -4,7 +4,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Modular DNN-based face detection framework, optimized for CPU deployment.
+Modular DNN-based ID document reading framework — face detection, OCR text reading, and MRZ parsing, optimized for CPU deployment.
 
 ## Features
 
@@ -174,16 +174,20 @@ graph TD
 
 `FaceDetectorDNN` runs the **SCRFD-2.5G** face detector (InsightFace
 `buffalo_m` detection weights) through an **onnxruntime CPU** session.
-The ONNX file is downloaded automatically on first use to a
-`platformdirs` cache directory and reused afterwards. There is no
-fallback to other models or providers — a missing or unloadable model
-raises `ModelError`. Inference input size is configurable via `det_size`
-(default `640x640`, multiples of 32); images are letterboxed to preserve
-aspect ratio and boxes are mapped back to original image coordinates.
+The ONNX file is downloaded automatically on first use and reused
+afterwards. There is no fallback to other models or providers — a missing
+or unloadable model raises `ModelError`. Inference input size is
+configurable via `det_size` (default `640x640`, multiples of 32); images
+are letterboxed to preserve aspect ratio and boxes are mapped back to
+original image coordinates.
 
 `RapidOCRReader` runs RapidOCR's **PP-OCR** ONNX models (detection,
-classification, recognition) through the same onnxruntime CPU profile,
-with weights cached under `user_cache_dir("blitzid")/models/rapidocr`.
+classification, recognition) through the same onnxruntime CPU profile.
+
+Weights live in the default models dir: `BLITZID_MODELS_DIR` when set,
+else `user_cache_dir("blitzid")/models/`. Pre-fetch everything for a
+Docker image with `python scripts/download_models.py` (default target:
+`models/`); see [models/README.md](models/README.md).
 
 ## Development
 

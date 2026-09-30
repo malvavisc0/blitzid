@@ -84,7 +84,8 @@ class RapidOCRReader:
 
     Args:
         model_dir: Directory for the OCR model weights. Defaults to the
-            platformdirs blitzid cache.
+            blitzid models dir (``BLITZID_MODELS_DIR`` or the platformdirs
+            cache).
         log_level: Logging level for the reader's logger.
 
     Raises:

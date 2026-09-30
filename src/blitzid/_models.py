@@ -1,13 +1,15 @@
 """Model management for the SCRFD face detection network.
 
 Downloads the SCRFD-2.5G ONNX model (InsightFace ``buffalo_m`` detection
-weights) and creates a CPU inference session. Always uses ``platformdirs``
-for model storage.
+weights) and creates a CPU inference session. Weights live in the
+default models dir: ``BLITZID_MODELS_DIR`` when set, else the
+``platformdirs`` user cache.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -19,11 +21,14 @@ from .exceptions import ModelError
 
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 
+MODELS_DIR_ENV = "BLITZID_MODELS_DIR"
+
 
 def default_model_dir(subdir: str | None = None) -> Path:
     """Return the default directory for storing model weights.
 
-    Uses ``platformdirs.user_cache_dir("blitzid")``.
+    Honors ``BLITZID_MODELS_DIR``; otherwise uses
+    ``platformdirs.user_cache_dir("blitzid")``.
 
     Args:
         subdir: Optional subdirectory.
@@ -31,7 +36,8 @@ def default_model_dir(subdir: str | None = None) -> Path:
     Returns:
         Resolved :class:`~pathlib.Path` that is guaranteed to exist.
     """
-    base = Path(user_cache_dir("blitzid")) / "models"
+    env_dir = os.environ.get(MODELS_DIR_ENV)
+    base = Path(env_dir) if env_dir else Path(user_cache_dir("blitzid")) / "models"
 
     if subdir:
         base = base / subdir

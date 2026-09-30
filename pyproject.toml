@@ -1,7 +1,7 @@
 [project]
 name = "blitzid"
 version = "0.1.0"
-description = "Modular DNN-based face detection framework optimized for CPU deployment"
+description = "Modular DNN-based ID document reading framework (face detection, OCR, MRZ) optimized for CPU deployment"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

@@ -1,8 +1,13 @@
 services:
   api:
     build: .
-    # For released tags, build from the published GHCR image instead:
-    # image: ghcr.io/malvavisc0/blitzid:latest
+    # Compose tags the locally built image with this name (defaults to
+    # :latest); CI sets BLITZID_IMAGE_TAG to the release tag so the
+    # smoke test runs the exact image it is about to push. Released
+    # tags can skip the build and run the published image instead:
+    #   docker compose up --no-build
+    # after `docker pull ghcr.io/malvavisc0/blitzid:latest`.
+    image: ghcr.io/malvavisc0/blitzid:${BLITZID_IMAGE_TAG:-latest}
     ports:
       - "8000:8000"
     env_file:

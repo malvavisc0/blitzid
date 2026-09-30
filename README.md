@@ -160,6 +160,9 @@ top-left, or None), `width`, `height`, `side`, `face_found`, `checks`
 constructor argument (a `FaceDetectorDNN`) enables the side-aware
 `face_present` check: `front` without a face warns, `back` is not
 expected (TD1 MRZ lives there), without a detector the check is `n/a`.
+The optional `detector_lock` argument serializes that check when the
+detector instance is shared across threads (the API passes its
+per-engine lock).
 
 ### Exceptions
 
@@ -226,11 +229,16 @@ The crop is the canonical image to keep and to re-submit to
 `/analyze` for cleaner OCR/MRZ.
 
 **GET /health** — engine, Redis, and job availability for container
-orchestration.
+orchestration. Returns `503` when the job store is unreachable (the
+container is unhealthy — it cannot accept or process jobs); a missing
+engine stays `200` with its `models` flag false, since submitting that
+analysis yields a precise `400`.
 
-Privacy: uploads and results live in RAM end to end — Redis runs with
+Privacy: uploads and results live in RAM end to end — job payloads
+are stored as raw image bytes (never base64-inflated), Redis runs with
 persistence disabled, results are claim-once and TTL-bounded, and the
-service itself never writes to disk. Knobs live in
+service itself never writes to disk. Worst-case Redis memory is
+bounded by the upload cap times the queue and TTL windows. Knobs live in
 [`.env.example`](.env.example) (`BLITZID_API_REDIS_URL`,
 `BLITZID_API_MAX_UPLOAD_MB`, `BLITZID_API_JOB_TTL_SECONDS`,
 `BLITZID_API_MAX_QUEUED_JOBS`, `BLITZID_API_MAX_CONCURRENT_JOBS`,

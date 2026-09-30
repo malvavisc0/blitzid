@@ -11,11 +11,15 @@ All notable changes to this project will be documented in this file.
   (multipart upload + `types` form field; eager validation with
   422/400/413/415/503), `GET /jobs/{id}` (claim-once results via
   GETDEL — later reads get `410 Gone`; TTL-bounded), `GET /health`
-  for orchestration. Jobs run in per-process worker threads bounded by
+  for orchestration (`503` when the job store is unreachable). Jobs
+  run in per-process worker threads bounded by
   `BLITZID_API_MAX_CONCURRENT_JOBS` with per-engine locks; a Redis
-  queue (persistence off — RAM only) with cap, TTL, and a claim-lease
-  sweeper that re-runs jobs abandoned by crashed workers. Env knobs:
-  `BLITZID_API_REDIS_URL`, `BLITZID_API_MAX_UPLOAD_MB`,
+  queue (persistence off — RAM only) with an atomically enforced cap,
+  TTL, raw-byte job payloads, and token-owned claims: worker
+  heartbeats extend the claim lease, a lost claim cancels the
+  analysis (the re-claimed worker's result wins), and the claim-lease
+  sweeper re-runs only jobs whose worker actually died. Env
+  knobs: `BLITZID_API_REDIS_URL`, `BLITZID_API_MAX_UPLOAD_MB`,
   `BLITZID_API_JOB_TTL_SECONDS`, `BLITZID_API_MAX_QUEUED_JOBS`,
   `BLITZID_API_MAX_CONCURRENT_JOBS`, `BLITZID_API_JOB_LEASE_SECONDS`.
 - Docker deployment: multi-stage `Dockerfile` (weights baked to
@@ -33,8 +37,10 @@ All notable changes to this project will be documented in this file.
   `brightness`, side-aware `face_present` — never fails a document).
   Optional `FaceDetectorDNN` injection powers the face check
   (`front` + no face → warn; `back` → not expected) without adding a
-  runtime `reading → face` dependency. The `POST /crop` API endpoint
-  wraps it: QC verdict plus the canonical `crop_base64` JPEG.
+  runtime `reading → face` dependency; an optional `detector_lock`
+  serializes the check against other users of a shared detector. The
+  `POST /crop` API endpoint wraps it: QC verdict plus the canonical
+  `crop_base64` JPEG.
 - `BLITZID_MODELS_DIR` environment variable: relocates all model-weight
   downloads (SCRFD + RapidOCR) when set; defaults to the platformdirs
   user cache as before. `scripts/download_models.py` pre-fetches all

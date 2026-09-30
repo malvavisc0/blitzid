@@ -97,10 +97,6 @@ class TestValidateImage:
         arr = np.zeros((MIN_DIMENSION, MIN_DIMENSION, 3), dtype=np.uint8)
         _validate_image(arr)  # should not raise
 
-    def test_none_raises(self) -> None:
-        with pytest.raises(ImageError, match="None"):
-            _validate_image(None)  # type: ignore[arg-type]
-
     def test_empty_2d_raises(self) -> None:
         arr = np.zeros((0, 100), dtype=np.uint8)
         with pytest.raises(ImageError, match="empty"):

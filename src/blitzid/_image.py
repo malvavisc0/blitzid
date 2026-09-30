@@ -87,8 +87,6 @@ def _load_from_path(path: Path) -> np.ndarray:
 
 def _load_from_array(array: np.ndarray, logger: logging.Logger) -> np.ndarray:
     """Validate numpy array."""
-    if not isinstance(array, np.ndarray):
-        raise ImageError(f"Image must be numpy array, got {type(array)}")
     if array.size == 0:
         raise ImageError("Image is empty (size = 0)")
 
@@ -122,10 +120,6 @@ def _load_from_pil(pil_image: PILImageType) -> np.ndarray:
 
 def _validate_image(img: np.ndarray) -> None:
     """Validate image dimensions and properties."""
-    if img is None:
-        raise ImageError("Failed to load image: result is None")
-    if not isinstance(img, np.ndarray):
-        raise ImageError(f"Image must be numpy array, got {type(img)}")
     if img.size == 0:
         raise ImageError("Image is empty (size = 0)")
     if len(img.shape) < 2:

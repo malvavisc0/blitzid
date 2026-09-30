@@ -371,7 +371,7 @@ class FaceDetectorDNN:
                         path.name,
                         len(faces),
                     )
-            except BlitzIDError as e:  # pragma: no cover
+            except BlitzIDError as e:
                 self.logger.error("Error processing %s: %s", path, e)
 
         return results

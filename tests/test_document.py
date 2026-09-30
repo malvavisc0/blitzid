@@ -1,12 +1,14 @@
 """Tests for blitzid.reading.document — quad detection, warp, and QC.
 
-Synthetic-image tests run without models or network. The face_present
-test on the specimen fixture uses the real SCRFD detector (weights
-download on first use, same as tests/test_detector.py).
+Synthetic-image tests run without models or network (the synthetic
+document factory lives in ``conftest.py``). The face_present tests on
+the specimen fixture use the real SCRFD detector (weights download on
+first use, same as tests/test_detector.py).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,46 +19,6 @@ import pytest
 from blitzid import BlitzIDError, DocumentCropper, Face, FaceDetectorDNN
 
 _FIXTURES = Path(__file__).parent.parent / "images"
-_CANVAS = (1240, 820)
-
-
-def _synthetic_document(
-    width: int = 983,
-    height: int = 620,
-    rotation: float = 0.0,
-    mean: float = 110.0,
-    blur: float = 0.0,
-    skew: float = 0.0,
-) -> np.ndarray:
-    """Draw a noisy document patch onto a light background canvas."""
-    rng = np.random.default_rng(7)
-    patch = np.clip(rng.normal(mean, 30, (height, width, 3)), 0, 255).astype(np.uint8)
-    cv2.putText(patch, "SPECIMEN", (60, height // 2), 0, 2.0, (240, 240, 240), 4)
-    cv2.rectangle(
-        patch, (width - 250, height - 200), (width - 60, height - 60), (10, 10, 10), 8
-    )
-    if blur:
-        patch = cv2.GaussianBlur(patch, (0, 0), blur)
-
-    center = (_CANVAS[0] / 2, _CANVAS[1] / 2)
-    corners = np.array(
-        [
-            [-width / 2, -height / 2],
-            [width / 2, -height / 2],
-            [width / 2, height / 2],
-            [-width / 2, height / 2],
-        ],
-        dtype=np.float64,
-    )
-    corners[2] += [skew * width / 2, skew * height / 2]
-    rot = cv2.getRotationMatrix2D((0, 0), rotation, 1.0)
-    corners = (rot[:, :2] @ corners.T).T + center
-    src = np.array(
-        [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
-        dtype=np.float32,
-    )
-    matrix = cv2.getPerspectiveTransform(src, corners.astype(np.float32))
-    return cv2.warpPerspective(patch, matrix, _CANVAS, borderValue=(235, 235, 235))
 
 
 class _StubDetector:
@@ -74,8 +36,10 @@ def _face() -> Face:
 
 
 class TestQuadDetection:
-    def test_document_found_with_matching_aspect(self) -> None:
-        crop, report = DocumentCropper().crop(_synthetic_document())
+    def test_document_found_with_matching_aspect(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
+        crop, report = DocumentCropper().crop(synthetic_document())
         assert report.checks["document_found"] == "pass"
         assert report.quad is not None and len(report.quad) == 4
         assert crop is not None
@@ -85,7 +49,8 @@ class TestQuadDetection:
     def test_uniform_noise_rejected(self) -> None:
         noise = (
             np.random.default_rng(1)
-            .integers(0, 255, (_CANVAS[1], _CANVAS[0], 3))
+            # same canvas size as the synthetic-document factory
+            .integers(0, 255, (820, 1240, 3))
             .astype(np.uint8)
         )
         crop, report = DocumentCropper().crop(noise)
@@ -95,74 +60,96 @@ class TestQuadDetection:
         assert report.verdict == "reject"
 
     @pytest.mark.parametrize("rotation", [8.0, -8.0])
-    def test_rotation_recovered_by_warp(self, rotation: float) -> None:
-        crop, report = DocumentCropper().crop(_synthetic_document(rotation=rotation))
+    def test_rotation_recovered_by_warp(
+        self, synthetic_document: Callable[..., np.ndarray], rotation: float
+    ) -> None:
+        crop, report = DocumentCropper().crop(synthetic_document(rotation=rotation))
         assert report.checks["document_found"] == "pass"
         assert crop is not None
         assert report.width / report.height == pytest.approx(983 / 620, rel=0.02)
 
-    def test_perspective_skew_recovered_by_warp(self) -> None:
-        crop, report = DocumentCropper().crop(_synthetic_document(skew=0.15))
+    def test_perspective_skew_recovered_by_warp(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
+        crop, report = DocumentCropper().crop(synthetic_document(skew=0.15))
         assert report.checks["document_found"] == "pass"
         assert crop is not None
         assert report.width / report.height == pytest.approx(983 / 620, rel=0.02)
 
 
 class TestQualityChecks:
-    def test_small_document_fails_resolution(self) -> None:
+    def test_small_document_fails_resolution(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         _crop, report = DocumentCropper().crop(
-            _synthetic_document(width=520, height=330)
+            synthetic_document(width=520, height=330)
         )
         assert report.checks["document_found"] == "pass"
         assert report.checks["resolution"] == "fail"
         assert report.verdict == "reject"
 
-    def test_dark_document_fails_brightness(self) -> None:
-        _crop, report = DocumentCropper().crop(_synthetic_document(mean=15.0))
+    def test_dark_document_fails_brightness(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
+        _crop, report = DocumentCropper().crop(synthetic_document(mean=15.0))
         assert report.checks["brightness"] == "fail"
         assert report.verdict == "reject"
 
-    def test_blurred_document_flags_sharpness(self) -> None:
-        _crop, report = DocumentCropper().crop(_synthetic_document(blur=3.0))
+    def test_blurred_document_flags_sharpness(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
+        _crop, report = DocumentCropper().crop(synthetic_document(blur=3.0))
         assert report.checks["sharpness"] in {"warn", "fail"}
 
 
 class TestSideSemantics:
-    def test_front_with_face_passes(self) -> None:
+    def test_front_with_face_passes(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         cropper = DocumentCropper(detector=_StubDetector([_face()]))  # type: ignore[arg-type]
-        _crop, report = cropper.crop(_synthetic_document(), side="front")
+        _crop, report = cropper.crop(synthetic_document(), side="front")
         assert report.checks["face_present"] == "pass"
         assert report.face_found is True
         assert report.verdict == "pass"
 
-    def test_front_without_face_warns_not_rejects(self) -> None:
+    def test_front_without_face_warns_not_rejects(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         cropper = DocumentCropper(detector=_StubDetector([]))  # type: ignore[arg-type]
-        _crop, report = cropper.crop(_synthetic_document(), side="front")
+        _crop, report = cropper.crop(synthetic_document(), side="front")
         assert report.checks["face_present"] == "warn"
         assert report.face_found is False
         assert report.verdict == "warn"
 
-    def test_back_face_not_expected(self) -> None:
+    def test_back_face_not_expected(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         cropper = DocumentCropper(detector=_StubDetector([]))  # type: ignore[arg-type]
-        _crop, report = cropper.crop(_synthetic_document(), side="back")
+        _crop, report = cropper.crop(synthetic_document(), side="back")
         assert report.checks["face_present"] == "n/a"
         assert report.face_found is None
         assert report.verdict == "pass"
 
-    def test_unknown_reports_face_found_as_information(self) -> None:
+    def test_unknown_reports_face_found_as_information(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         cropper = DocumentCropper(detector=_StubDetector([_face()]))  # type: ignore[arg-type]
-        _crop, report = cropper.crop(_synthetic_document(), side="unknown")
+        _crop, report = cropper.crop(synthetic_document(), side="unknown")
         assert report.checks["face_present"] == "n/a"
         assert report.face_found is True
 
-    def test_no_detector_reports_na(self) -> None:
-        _crop, report = DocumentCropper().crop(_synthetic_document(), side="front")
+    def test_no_detector_reports_na(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
+        _crop, report = DocumentCropper().crop(synthetic_document(), side="front")
         assert report.checks["face_present"] == "n/a"
         assert report.face_found is None
 
-    def test_invalid_side_raises(self) -> None:
+    def test_invalid_side_raises(
+        self, synthetic_document: Callable[..., np.ndarray]
+    ) -> None:
         with pytest.raises(BlitzIDError, match="side"):
-            DocumentCropper().crop(_synthetic_document(), side="left")
+            DocumentCropper().crop(synthetic_document(), side="left")
 
 
 @pytest.fixture(scope="module")

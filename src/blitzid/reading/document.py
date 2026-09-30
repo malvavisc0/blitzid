@@ -24,13 +24,17 @@ Quality checks, each ``"pass"`` / ``"warn"`` / ``"fail"`` / ``"n/a"``:
 
 The optional injected face detector keeps this module pure CV without
 it — the detector type is imported only for type checking, so the
-reading domain gains no runtime dependency on the face domain.
+reading domain gains no runtime dependency on the face domain. The
+optional ``detector_lock`` constructor argument serializes the
+detection call when the detector is shared across threads.
 """
 
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass
+from threading import Lock
 from typing import TYPE_CHECKING, Literal
 
 import cv2
@@ -212,17 +216,20 @@ def _check_face_present(
     crop: np.ndarray,
     side: str,
     detector: FaceDetectorDNN | None,
+    detector_lock: Lock | None,
 ) -> tuple[bool | None, CheckResult]:
     """Side-aware face check; never fails a document.
 
     front: face -> pass, no face -> warn. back: n/a (not expected —
     TD1 MRZ lives on the back; detection is not run). unknown: n/a with
     face_found reported as information only. No detector: n/a and
-    face_found None.
+    face_found None. *detector_lock*, when given, serializes the
+    detection call against other users of the same shared detector.
     """
     if detector is None or side == "back":
         return None, "n/a"
-    found = bool(detector.detect_face_landmarks(crop))
+    with detector_lock if detector_lock is not None else nullcontext():
+        found = bool(detector.detect_face_landmarks(crop))
     if side == "front":
         return found, "pass" if found else "warn"
     return found, "n/a"
@@ -265,6 +272,9 @@ class DocumentCropper:
             side-aware ``face_present`` check. Without it the check
             reports ``"n/a"`` and ``face_found`` is None; detection
             runs on the warped crop (the canonical frame clients save).
+        detector_lock: Optional lock serializing the face-detection
+            call against other threads sharing the same *detector*
+            instance (the API injects its per-engine lock here).
         log_level: Logging level for the cropper's logger.
 
     Raises:
@@ -275,11 +285,13 @@ class DocumentCropper:
     def __init__(
         self,
         detector: FaceDetectorDNN | None = None,
+        detector_lock: Lock | None = None,
         log_level: int = logging.WARNING,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
         self._detector = detector
+        self._detector_lock = detector_lock
 
     def crop(
         self, image_input: ImageInput, side: str = "unknown"
@@ -325,7 +337,9 @@ class DocumentCropper:
         side: str,
     ) -> QualityReport:
         """Build the full QualityReport for a warped crop."""
-        face_found, face_check = _check_face_present(crop, side, self._detector)
+        face_found, face_check = _check_face_present(
+            crop, side, self._detector, self._detector_lock
+        )
         checks: dict[str, CheckResult] = {
             "document_found": "pass",
             "aspect_ratio": _check_aspect_ratio(crop),

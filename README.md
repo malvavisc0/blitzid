@@ -160,14 +160,18 @@ Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `Imag
 ```mermaid
 graph TD
     A[blitzid] --> B[face/detector.py<br/>FaceDetectorDNN]
-    A --> C[reading/ocr.py<br/>RapidOCRReader]
     A --> I[reading/mrz.py<br/>MRZReader]
-    A --> D[exceptions.py<br/>BlitzIDError · ModelError · ImageError]
+    A --> C[reading/ocr.py<br/>RapidOCRReader]
+    A --> D[exceptions.py<br/>BlitzIDError · ModelError · ImageError · MRZError]
 
-    B --> E[_models.py<br/>ModelManager · auto-download]
+    I --> C
+    B --> E[_models.py<br/>ModelManager · models dir]
     B --> F[_image.py<br/>load_image · ImageInput]
-    B --> G[_face.py<br/>Face · DetectionMetrics]
-    B --> H[_scrfd.py<br/>decode · letterbox]
+    B --> G[face/_face.py<br/>Face · DetectionMetrics · cache]
+    B --> H[face/_scrfd.py<br/>decode · letterbox]
+    C --> E
+    C --> F
+    H --> G
 ```
 
 ## Model

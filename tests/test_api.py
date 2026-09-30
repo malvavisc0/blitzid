@@ -17,11 +17,8 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import fakeredis
 import numpy as np
 import pytest
-import redis
-from fastapi.testclient import TestClient
 from test_document import _synthetic_document
 
 from blitzid import (
@@ -33,6 +30,13 @@ from blitzid import (
     OCRText,
     RapidOCRReader,
 )
+
+pytest.importorskip("fastapi")
+
+import fakeredis
+import redis
+from fastapi.testclient import TestClient
+
 from blitzid.api._analyze import Engines
 from blitzid.api._app import create_app
 from blitzid.api._jobs import (
@@ -43,8 +47,6 @@ from blitzid.api._jobs import (
     QueueFullError,
     RedisJobStore,
 )
-
-pytest.importorskip("fastapi")
 
 
 def _image_bytes(img: np.ndarray, ext: str = ".png") -> bytes:

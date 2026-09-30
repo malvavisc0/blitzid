@@ -29,6 +29,12 @@ dependencies = [
 ocr = [
     "rapidocr",
 ]
+api = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+    "redis",
+]
 scripts = [
     "tqdm",
 ]
@@ -39,9 +45,16 @@ dev = [
     "pre-commit",
     "tqdm",
     "types-tqdm",
+    # API test deps: fastapi TestClient (httpx), the API extra's
+    # request-parsing and store libraries, and a Redis double.
+    "fastapi",
+    "httpx",
+    "python-multipart",
+    "redis",
+    "fakeredis",
 ]
 all = [
-    "blitzid[ocr,scripts,dev]",
+    "blitzid[api,ocr,scripts,dev]",
 ]
 
 # ── Build system ───────────────────────────────────────────

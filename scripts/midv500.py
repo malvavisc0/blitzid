@@ -13,6 +13,7 @@ Run examples::
 from __future__ import annotations
 
 import argparse
+import logging
 import statistics
 import zipfile
 from collections.abc import Iterable
@@ -21,6 +22,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 import cv2
+from demo_cli import _parse_log_level
 from tqdm import tqdm
 
 from blitzid import FaceDetectorDNN
@@ -61,111 +63,67 @@ def unzip(file_path: str | Path, dest_dir: str | Path) -> None:
         zf.extractall(str(dest_dir))
 
 
+# The two datasets ship the same 50 ZIPs, only the FTP directory differs.
+_ZIP_NAMES = (
+    "01_alb_id.zip",
+    "02_aut_drvlic_new.zip",
+    "03_aut_id_old.zip",
+    "04_aut_id.zip",
+    "05_aze_passport.zip",
+    "06_bra_passport.zip",
+    "07_chl_id.zip",
+    "08_chn_homereturn.zip",
+    "09_chn_id.zip",
+    "10_cze_id.zip",
+    "11_cze_passport.zip",
+    "12_deu_drvlic_new.zip",
+    "13_deu_drvlic_old.zip",
+    "14_deu_id_new.zip",
+    "15_deu_id_old.zip",
+    "16_deu_passport_new.zip",
+    "17_deu_passport_old.zip",
+    "18_dza_passport.zip",
+    "19_esp_drvlic.zip",
+    "20_esp_id_new.zip",
+    "21_esp_id_old.zip",
+    "22_est_id.zip",
+    "23_fin_drvlic.zip",
+    "24_fin_id.zip",
+    "25_grc_passport.zip",
+    "26_hrv_drvlic.zip",
+    "27_hrv_passport.zip",
+    "28_hun_passport.zip",
+    "29_irn_drvlic.zip",
+    "30_ita_drvlic.zip",
+    "31_jpn_drvlic.zip",
+    "32_lva_passport.zip",
+    "33_mac_id.zip",
+    "34_mda_passport.zip",
+    "35_nor_drvlic.zip",
+    "36_pol_drvlic.zip",
+    "37_prt_id.zip",
+    "38_rou_drvlic.zip",
+    "39_rus_internalpassport.zip",
+    "40_srb_id.zip",
+    "41_srb_passport.zip",
+    "42_svk_id.zip",
+    "43_tur_id.zip",
+    "44_ukr_id.zip",
+    "45_ukr_passport.zip",
+    "46_ury_passport.zip",
+    "47_usa_bordercrossing.zip",
+    "48_usa_passportcard.zip",
+    "49_usa_ssn82.zip",
+    "50_xpo_id.zip",
+)
+
 midv500_links: list[str] = [
-    "ftp://smartengines.com/midv-500/dataset/01_alb_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/02_aut_drvlic_new.zip",
-    "ftp://smartengines.com/midv-500/dataset/03_aut_id_old.zip",
-    "ftp://smartengines.com/midv-500/dataset/04_aut_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/05_aze_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/06_bra_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/07_chl_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/08_chn_homereturn.zip",
-    "ftp://smartengines.com/midv-500/dataset/09_chn_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/10_cze_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/11_cze_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/12_deu_drvlic_new.zip",
-    "ftp://smartengines.com/midv-500/dataset/13_deu_drvlic_old.zip",
-    "ftp://smartengines.com/midv-500/dataset/14_deu_id_new.zip",
-    "ftp://smartengines.com/midv-500/dataset/15_deu_id_old.zip",
-    "ftp://smartengines.com/midv-500/dataset/16_deu_passport_new.zip",
-    "ftp://smartengines.com/midv-500/dataset/17_deu_passport_old.zip",
-    "ftp://smartengines.com/midv-500/dataset/18_dza_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/19_esp_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/20_esp_id_new.zip",
-    "ftp://smartengines.com/midv-500/dataset/21_esp_id_old.zip",
-    "ftp://smartengines.com/midv-500/dataset/22_est_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/23_fin_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/24_fin_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/25_grc_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/26_hrv_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/27_hrv_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/28_hun_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/29_irn_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/30_ita_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/31_jpn_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/32_lva_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/33_mac_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/34_mda_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/35_nor_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/36_pol_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/37_prt_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/38_rou_drvlic.zip",
-    "ftp://smartengines.com/midv-500/dataset/39_rus_internalpassport.zip",
-    "ftp://smartengines.com/midv-500/dataset/40_srb_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/41_srb_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/42_svk_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/43_tur_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/44_ukr_id.zip",
-    "ftp://smartengines.com/midv-500/dataset/45_ukr_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/46_ury_passport.zip",
-    "ftp://smartengines.com/midv-500/dataset/47_usa_bordercrossing.zip",
-    "ftp://smartengines.com/midv-500/dataset/48_usa_passportcard.zip",
-    "ftp://smartengines.com/midv-500/dataset/49_usa_ssn82.zip",
-    "ftp://smartengines.com/midv-500/dataset/50_xpo_id.zip",
+    f"ftp://smartengines.com/midv-500/dataset/{name}" for name in _ZIP_NAMES
 ]
 
-
 midv2019_links: list[str] = [
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/01_alb_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/02_aut_drvlic_new.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/03_aut_id_old.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/04_aut_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/05_aze_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/06_bra_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/07_chl_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/08_chn_homereturn.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/09_chn_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/10_cze_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/11_cze_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/12_deu_drvlic_new.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/13_deu_drvlic_old.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/14_deu_id_new.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/15_deu_id_old.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/16_deu_passport_new.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/17_deu_passport_old.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/18_dza_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/19_esp_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/20_esp_id_new.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/21_esp_id_old.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/22_est_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/23_fin_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/24_fin_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/25_grc_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/26_hrv_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/27_hrv_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/28_hun_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/29_irn_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/30_ita_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/31_jpn_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/32_lva_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/33_mac_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/34_mda_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/35_nor_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/36_pol_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/37_prt_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/38_rou_drvlic.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/39_rus_internalpassport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/40_srb_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/41_srb_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/42_svk_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/43_tur_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/44_ukr_id.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/45_ukr_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/46_ury_passport.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/47_usa_bordercrossing.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/48_usa_passportcard.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/49_usa_ssn82.zip",
-    "ftp://smartengines.com/midv-500/extra/midv-2019/dataset/50_xpo_id.zip",
+    f"ftp://smartengines.com/midv-500/extra/midv-2019/dataset/{name}"
+    for name in _ZIP_NAMES
 ]
 
 
@@ -572,24 +530,6 @@ def run_face_test(
 # ── CLI ──────────────────────────────────────────────────────
 
 
-def _parse_log_level(value: str) -> int:
-    import logging
-
-    mapping = {
-        "CRITICAL": logging.CRITICAL,
-        "ERROR": logging.ERROR,
-        "WARNING": logging.WARNING,
-        "INFO": logging.INFO,
-        "DEBUG": logging.DEBUG,
-    }
-    key = value.strip().upper()
-    if key not in mapping:
-        raise argparse.ArgumentTypeError(
-            f"Invalid log level: {value}. Choose from: {', '.join(mapping)}"
-        )
-    return mapping[key]
-
-
 def _build_download_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "download_dir",
@@ -644,7 +584,7 @@ def _build_test_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--face-padding", type=float, default=0.2)
 
     parser.add_argument("--include-root-images", action="store_true")
-    parser.add_argument("--log-level", default="WARNING")
+    parser.add_argument("--log-level", type=_parse_log_level, default=logging.WARNING)
 
 
 def main(argv: Iterable[str] | None = None) -> None:
@@ -683,7 +623,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         max_faces_per_image=int(args.max_faces_per_image),
         face_padding=float(args.face_padding),
         include_root_images=bool(args.include_root_images),
-        log_level=_parse_log_level(str(args.log_level)),
+        log_level=args.log_level,
     )
     raise SystemExit(code)
 

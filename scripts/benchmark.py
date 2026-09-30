@@ -124,10 +124,12 @@ def _benchmark_reading(
 def _benchmark_ocr(mrz_image: Path, runs: int) -> list[tuple[str, str, float, float]]:
     """Benchmark RapidOCRReader and MRZReader; skipped without the extra."""
     try:
-        from blitzid import MRZReader, RapidOCRReader
+        import rapidocr  # noqa: F401
     except ImportError:
         print("(ocr benchmarks skipped: rapidocr not installed)")
         return []
+
+    from blitzid import MRZReader, RapidOCRReader
 
     reader = RapidOCRReader(log_level=logging.WARNING)
     mrz = MRZReader(reader=reader, log_level=logging.WARNING)

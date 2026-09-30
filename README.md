@@ -192,15 +192,16 @@ Docker image with `python scripts/download_models.py` (default target:
 ## Development
 
 ```bash
-# Install all dev + optional deps
-pip install -e ".[all]"
+# Install dev dependencies
+uv sync --extra dev
 
 # Run tests
-pytest
+uv run pytest tests/ -v
 
-# Lint & type-check
-ruff check src/ tests/
-mypy src/
+# Lint & type-check (mirrors CI)
+uv run ruff check src/ tests/ scripts/
+uv run ruff format --check src/ tests/ scripts/
+uv run mypy src/ scripts/
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.

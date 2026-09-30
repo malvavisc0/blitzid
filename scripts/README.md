@@ -34,6 +34,16 @@ uv run python scripts/ocr_demo.py --image images/nl_td1_id_specimen.jpg
 uv run python scripts/ocr_demo.py --image images/td3_passport_specimen.jpg
 ```
 
+## `benchmark.py` — pipeline timing
+
+Times engine init and warm per-call latency for the detection presets,
+the result cache, and (with the `ocr` extra) OCR/MRZ reading. Prints a
+table and writes it to `results/benchmark-<timestamp>.md`.
+
+```bash
+uv run python scripts/benchmark.py --markdown
+```
+
 ## `midv500_download.py` — MIDV-500 dataset download (needs `scripts` extra)
 
 Downloads the MIDV-500 / MIDV-2019 dataset into a local data directory.

@@ -1,6 +1,6 @@
 """FaceDetectorDNN demonstration script.
 
-Showcases the public API exposed by :mod:`blitzid.detector`.
+Showcases the public API exposed by :mod:`blitzid.face.detector`.
 
 Run examples::
 

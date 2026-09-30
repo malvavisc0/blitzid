@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+from numpy.typing import NDArray
 
+from ..exceptions import ModelError
 from ._face import Face
-from .exceptions import ModelError
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 SCRFD_STRIDES: tuple[int, ...] = (8, 16, 32)
 SCRFD_NUM_ANCHORS = 2

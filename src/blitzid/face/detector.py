@@ -15,6 +15,9 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from .._image import ImageInput, load_image
+from .._models import ModelManager, default_model_dir
+from ..exceptions import BlitzIDError
 from ._face import (
     DetectionMetrics,
     Face,
@@ -23,8 +26,6 @@ from ._face import (
     compute_hash,
     draw_detections,
 )
-from ._image import ImageInput, load_image
-from ._models import ModelManager, default_model_dir
 from ._scrfd import (
     SCRFD_STRIDES,
     anchor_centers,
@@ -34,7 +35,6 @@ from ._scrfd import (
     to_blob,
     validate_architecture,
 )
-from .exceptions import BlitzIDError
 
 __all__ = ["DetectionMetrics", "Face", "FaceDetectorDNN"]
 

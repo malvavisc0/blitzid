@@ -8,9 +8,9 @@ Public API
 - ``BlitzIDError``, ``ModelError``, ``ImageError`` — exception hierarchy.
 """
 
-from ._face import DetectionMetrics, Face
-from .detector import FaceDetectorDNN
 from .exceptions import BlitzIDError, ImageError, ModelError
+from .face._face import DetectionMetrics, Face
+from .face.detector import FaceDetectorDNN
 
 FaceDetectorError = BlitzIDError
 ModelDownloadError = ModelError

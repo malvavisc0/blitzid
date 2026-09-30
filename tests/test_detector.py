@@ -12,8 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from blitzid.detector import DetectionMetrics, Face, FaceDetectorDNN
 from blitzid.exceptions import BlitzIDError
+from blitzid.face.detector import DetectionMetrics, Face, FaceDetectorDNN
 
 SYNTHETIC_IMAGE = np.zeros((480, 640, 3), dtype=np.uint8)
 

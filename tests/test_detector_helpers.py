@@ -1,4 +1,4 @@
-"""Unit tests for blitzid.detector and blitzid._scrfd pure helpers.
+"""Unit tests for blitzid.face.detector and blitzid.face._scrfd pure helpers.
 
 Covers SCRFD decode, IoU, NMS, filter, cache, scales, and draw.
 All tests are pure-function / fast, no model required.
@@ -9,8 +9,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blitzid._face import Face, LRUCache, compute_hash, draw_detections
-from blitzid._scrfd import (
+from blitzid.exceptions import BlitzIDError, ModelError
+from blitzid.face._face import Face, LRUCache, compute_hash, draw_detections
+from blitzid.face._scrfd import (
     anchor_centers,
     decode_outputs,
     distance2bbox,
@@ -19,13 +20,12 @@ from blitzid._scrfd import (
     map_detections_to_faces,
     validate_architecture,
 )
-from blitzid.detector import (
+from blitzid.face.detector import (
     _apply_nms,
     _calculate_iou,
     _filter_by_size,
     _normalize_scales,
 )
-from blitzid.exceptions import BlitzIDError, ModelError
 
 
 class TestCalculateIoU:

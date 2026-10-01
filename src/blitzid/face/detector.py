@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .._image import ImageInput, load_image
+from .._image import ImageInput, crop_with_padding, load_image
 from .._models import ModelManager, default_model_dir
 from ..exceptions import BlitzIDError
 from ._face import (
@@ -307,19 +307,14 @@ class FaceDetectorDNN:
         img = load_image(image_input, self.logger)
         faces, _, _ = self._detect_from_array(img)
 
-        h, w = img.shape[:2]
-        extracted: list[tuple[NDArray[np.uint8], tuple[int, int, int, int], float]] = []
-        for face in faces:
-            x, y, fw, fh = face.bbox
-            pad_w = int(fw * padding)
-            pad_h = int(fh * padding)
-            x1 = max(0, x - pad_w)
-            y1 = max(0, y - pad_h)
-            x2 = min(w, x + fw + pad_w)
-            y2 = min(h, y + fh + pad_h)
-            extracted.append((img[y1:y2, x1:x2], (x, y, fw, fh), face.confidence))
-
-        return extracted
+        return [
+            (
+                crop_with_padding(img, face.bbox, padding),
+                face.bbox,
+                face.confidence,
+            )
+            for face in faces
+        ]
 
     def visualize_detections(
         self,

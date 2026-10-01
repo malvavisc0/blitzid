@@ -154,3 +154,27 @@ def _normalize_channels(img: np.ndarray) -> np.ndarray:
                 "Expected 1, 3, or 4 channels."
             )
     return img
+
+
+def crop_with_padding(
+    img: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    padding: float,
+) -> np.ndarray:
+    """Crop an ``(x, y, w, h)`` box with relative padding, clipped to the image.
+
+    Args:
+        img: BGR image array.
+        bbox: The box as ``(x, y, w, h)`` in image pixels.
+        padding: Relative padding on each side (fraction of w/h).
+
+    Returns:
+        The cropped image region.
+    """
+    height, width = img.shape[:2]
+    x, y, box_w, box_h = bbox
+    pad_w, pad_h = int(box_w * padding), int(box_h * padding)
+    x1, y1 = max(0, x - pad_w), max(0, y - pad_h)
+    x2 = min(width, x + box_w + pad_w)
+    y2 = min(height, y + box_h + pad_h)
+    return img[y1:y2, x1:x2]

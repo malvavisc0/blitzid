@@ -188,7 +188,7 @@ def _detect_document_quad(img: np.ndarray) -> tuple[tuple[int, int], ...] | None
         if quad is None:
             continue
         area = _quad_area(quad)
-        if area > best_area and _edge_support(dist, quad):
+        if area >= best_area and _edge_support(dist, quad):
             best, best_area = quad, area
     return best
 
@@ -319,10 +319,6 @@ class DocumentCropper:
             call against other threads sharing the same *detector*
             instance (the API injects its per-engine lock here).
         log_level: Logging level for the cropper's logger.
-
-    Raises:
-        BlitzIDError: If *side* is not ``"front"``, ``"back"``, or
-            ``"unknown"`` (from :meth:`crop`).
     """
 
     def __init__(

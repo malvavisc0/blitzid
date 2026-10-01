@@ -11,18 +11,18 @@ window (the results index prunes itself on every write), so memory
 stays bounded — nothing ever reaches disk.
 
 Claim protocol: ``LMOVE`` pops a job id from the queue into the
-processing list and the claiming worker immediately takes the claim
-key with ``SET NX`` holding a unique token — exactly one worker can
-own a job at a time, even when the sweeper requeues an id that was
-mid-claim. Results are written once and read via ``GETDEL``
-(claim-once — every subsequent read sees the id as gone). A running
-worker extends its claim lease (and status TTL) via
+processing list and the claiming worker takes the claim key holding a
+unique token (``WATCH``/``MULTI`` on the claim and job keys — exactly
+one worker can own a job at a time, even when the sweeper requeues an
+id that was mid-claim). Results are written once and read via
+``GETDEL`` (claim-once — every subsequent read sees the id as gone). A
+running worker extends its claim lease (and status TTL) via
 :meth:`RedisJobStore.renew`, which only succeeds for the token owner;
 a worker whose lease was lost learns this from ``renew`` and abandons
 its result. A worker crash is recovered by the lease sweeper: ids
 still in processing past ``BLITZID_API_JOB_LEASE_SECONDS`` are pushed
 back onto the queue (respecting the queue cap; abandoned ids whose
-payload expired are dropped instead).
+payload expired are retired outright).
 """
 
 from __future__ import annotations
@@ -63,7 +63,8 @@ class JobSnapshot:
     Attributes:
         status: ``"queued"``, ``"running"``, ``"done"`` (a result
             exists — claimed by this read), ``"gone"`` (expired or
-            already claimed), or ``"missing"`` (unknown id).
+            already claimed), or ``"missing"`` (unknown id, or expired
+            past the 2x-TTL registry grace window).
         result: The stored result dict when status is ``"done"``.
     """
 
@@ -198,10 +199,12 @@ class RedisJobStore:
     def claim(self) -> ClaimedJob | None:
         """Pop the oldest queued job into processing, or None if empty.
 
-        Jobs whose payload expired mid-queue are dropped and skipped.
-        The claim key is taken with ``SET NX`` holding a unique token;
-        when the sweeper requeued this id in the pop→claim window, the
-        claim fails and the id is left for its new queue turn.
+        Jobs whose payload expired mid-queue are retired (their status
+        is cleared, so polls see ``gone``) and skipped. The claim key
+        is taken under a unique token guarded by the claim and job
+        keys; when the sweeper requeued this id in the pop→claim
+        window, or another worker already owns it, the claim is left
+        to that owner and the next queued id is tried.
 
         A claimed job holds a token-owned claim-lease key; the worker
         must call :meth:`renew` while it runs or the sweeper requeues
@@ -212,36 +215,50 @@ class RedisJobStore:
             raw_id = self._redis.lmove(QUEUE_KEY, PROCESSING_KEY, "RIGHT", "LEFT")
             if raw_id is None:
                 return None
-            job_id = _text(raw_id)
-            raw = self._redis.hgetall(JOB_PREFIX + job_id)
-            if not raw:
-                self._redis.lrem(PROCESSING_KEY, 1, job_id)
-                continue
-            claim_key = CLAIM_PREFIX + job_id
-            with self._redis.pipeline() as pipe:
-                while True:
-                    try:
-                        pipe.watch(claim_key)  # type: ignore[no-untyped-call]
-                        if pipe.get(claim_key) is not None:
-                            # requeued by the sweeper mid-claim (or a
-                            # live claim survived): leave the id queued
-                            # for its new owner's queue turn
-                            pipe.unwatch()
-                            self._redis.lrem(PROCESSING_KEY, 1, job_id)
-                            break
+            job = self._try_claim(_text(raw_id), token)
+            if job is not None:
+                return job
+
+    def _try_claim(self, job_id: str, token: str) -> ClaimedJob | None:
+        """Take the claim on one popped id, or None when it is not ours.
+
+        Payload presence and claim ownership are re-checked inside one
+        watched transaction, so a result write (which deletes the
+        payload and claim) racing the claim aborts it instead of
+        letting a stale copy run again. When the claim key holds a
+        foreign token — a duplicate queue copy from a requeue race —
+        the processing entry is left alone: its owner's
+        :meth:`write_result` or the sweeper cleans it up, so a crash
+        of the owner can never lose the job.
+        """
+        claim_key = CLAIM_PREFIX + job_id
+        job_key = JOB_PREFIX + job_id
+        with self._redis.pipeline() as pipe:
+            while True:
+                try:
+                    pipe.watch(claim_key, job_key)  # type: ignore[no-untyped-call]
+                    if pipe.get(claim_key) is not None:
+                        pipe.unwatch()
+                        return None
+                    raw = pipe.hgetall(job_key)
+                    if not raw:
                         pipe.multi()
-                        pipe.set(claim_key, token, ex=self._lease)
-                        pipe.set(STATUS_PREFIX + job_id, "running", ex=self._ttl)
+                        pipe.lrem(PROCESSING_KEY, 0, job_id)
+                        pipe.delete(STATUS_PREFIX + job_id)
                         pipe.execute()
-                        return ClaimedJob(
-                            job_id=job_id,
-                            image=cast(bytes, raw[b"image"]),
-                            types=json.loads(_text(raw[b"types"])),
-                            token=token,
-                        )
-                    except redis.WatchError:
-                        continue
-            # a claim or requeue raced us — try the next job
+                        return None
+                    pipe.multi()
+                    pipe.set(claim_key, token, ex=self._lease)
+                    pipe.set(STATUS_PREFIX + job_id, "running", ex=self._ttl)
+                    pipe.execute()
+                    return ClaimedJob(
+                        job_id=job_id,
+                        image=cast(bytes, raw[b"image"]),
+                        types=json.loads(_text(raw[b"types"])),
+                        token=token,
+                    )
+                except redis.WatchError:
+                    continue
 
     def renew(self, job_id: str, token: str) -> bool:
         """Extend the claim lease and status TTL (worker heartbeat).
@@ -251,13 +268,21 @@ class RedisJobStore:
         a ``False`` return means the lease was lost (worker crash
         recovery took over) and the worker must abandon its result.
         """
-        # compare-and-expire: only the current owner extends the lease
-        if self._redis.get(CLAIM_PREFIX + job_id) != token.encode():
-            return False
-        pipe = self._redis.pipeline(transaction=True)
-        pipe.expire(CLAIM_PREFIX + job_id, self._lease)
-        pipe.expire(STATUS_PREFIX + job_id, self._ttl)
-        return bool(all(pipe.execute()))
+        claim_key = CLAIM_PREFIX + job_id
+        with self._redis.pipeline() as pipe:
+            while True:
+                try:
+                    pipe.watch(claim_key)  # type: ignore[no-untyped-call]
+                    if pipe.get(claim_key) != token.encode():
+                        pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.expire(claim_key, self._lease)
+                    pipe.expire(STATUS_PREFIX + job_id, self._ttl)
+                    pipe.execute()
+                    return True
+                except redis.WatchError:
+                    continue
 
     def write_result(self, job_id: str, token: str, result: dict[str, Any]) -> None:
         """Store the final result and retire the job from processing.
@@ -310,28 +335,30 @@ class RedisJobStore:
     def sweep(self) -> int:
         """Requeue processing jobs whose claim lease expired.
 
-        Returns the number of requeued jobs. A crashed worker's job
-        re-runs instead of vanishing. A requeue is guarded by a watch
-        on the claim key, so a claim arriving mid-sweep aborts it; it
-        also respects the queue cap (an abandoned id is dropped when
-        the queue is full and its payload has expired).
+        Returns the number of recovered jobs (requeued, or retired
+        when their payload expired). A crashed worker's job re-runs
+        instead of vanishing. A requeue runs inside a watched
+        transaction on the claim key, so a claim arriving mid-sweep
+        aborts it; it also respects the queue cap (an abandoned id is
+        retired when the queue is full and its payload has expired).
         """
-        requeued = 0
+        recovered = 0
         now = time.time()
         for raw_id in self._redis.lrange(PROCESSING_KEY, 0, -1):
             if self._requeue(_text(raw_id), now):
-                requeued += 1
-        return requeued
+                recovered += 1
+        return recovered
 
     def _requeue(self, job_id: str, now: float) -> bool:
         """Move an abandoned processing job back onto the queue.
 
         Runs inside a watched transaction on the claim key and returns
         False when the claim appears (or exists) — the job is not
-        abandoned after all. When the queue is at capacity, the id is
-        dropped only if its payload expired; a still-live payload keeps
-        the id queued beyond the cap (requeues are bounded by the
-        processing list length).
+        abandoned after all. An id whose payload expired is retired
+        outright (processing entry and status cleared); a still-live
+        payload is requeued unless the queue is at capacity, in which
+        case it stays in processing for a later sweep (requeues are
+        bounded by the processing list length).
         """
         claim_key = CLAIM_PREFIX + job_id
         with self._redis.pipeline() as pipe:
@@ -341,23 +368,23 @@ class RedisJobStore:
                     if pipe.get(claim_key) is not None:
                         pipe.unwatch()
                         return False
-                    queue_full = int(pipe.llen(QUEUE_KEY)) >= self._max_queued
                     payload_expired = int(pipe.hlen(JOB_PREFIX + job_id)) == 0
-                    pipe.unwatch()
-                    if queue_full:
-                        if payload_expired:
-                            # nothing left to run: retire the id instead
-                            # of pushing the queue past its cap
-                            self._redis.lrem(PROCESSING_KEY, 1, job_id)
-                            self._redis.delete(STATUS_PREFIX + job_id)
-                            return True
+                    if not payload_expired and int(pipe.llen(QUEUE_KEY)) >= (
+                        self._max_queued
+                    ):
+                        pipe.unwatch()
                         return False
                     pipe.multi()
                     pipe.lrem(PROCESSING_KEY, 0, job_id)
-                    pipe.lpush(QUEUE_KEY, job_id)
-                    pipe.set(STATUS_PREFIX + job_id, "queued", ex=self._ttl)
-                    pipe.zadd(SUBMITTED_KEY, {job_id: now})
-                    self._prune_registry(pipe, now)
+                    if payload_expired:
+                        # nothing left to run: retire the id instead of
+                        # pushing the queue past its cap
+                        pipe.delete(STATUS_PREFIX + job_id)
+                    else:
+                        pipe.lpush(QUEUE_KEY, job_id)
+                        pipe.set(STATUS_PREFIX + job_id, "queued", ex=self._ttl)
+                        pipe.zadd(SUBMITTED_KEY, {job_id: now})
+                        self._prune_registry(pipe, now)
                     pipe.execute()
                     return True
                 except redis.WatchError:

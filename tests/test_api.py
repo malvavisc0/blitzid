@@ -40,12 +40,13 @@ import redis
 from fastapi.testclient import TestClient
 
 from blitzid.api._analyze import Engines
-from blitzid.api._app import ApiConfig, _JobCancelled, _Workers, create_app
+from blitzid.api._app import ApiConfig, _Workers, create_app
 from blitzid.api._jobs import (
     CLAIM_PREFIX,
     JOB_PREFIX,
     PROCESSING_KEY,
     QUEUE_KEY,
+    RESULT_PREFIX,
     ClaimedJob,
     JobSnapshot,
     QueueFullError,
@@ -63,10 +64,9 @@ class MemoryJobStore:
     """RedisJobStore-shaped in-process fake (same interface).
 
     Mirrors the real store's lease and registry semantics: claims are
-    token-owned with expiry timestamps (wound forward via
-    :meth:`expire_all_claims`), results are claim-once, and the
-    submission registry prunes to a 2x-TTL grace window so expired ids
-    become ``missing`` (404), not ``gone`` (410), after the window.
+    token-owned with expiry timestamps, results are claim-once, and
+    the submission registry prunes to a 2x-TTL grace window so expired
+    ids become ``missing`` (404), not ``gone`` (410), after the window.
     """
 
     def __init__(
@@ -93,10 +93,6 @@ class MemoryJobStore:
             "stored": len(self._results),
         }
 
-    def expire_all_claims(self) -> None:
-        """Simulate every worker dying: drop all claim leases."""
-        self._claims.clear()
-
     def submit(self, job_id: str, image: bytes, types: list[str]) -> None:
         if len(self._queue) >= self._max_queued:
             raise QueueFullError(f"queue is full ({self._max_queued} queued jobs)")
@@ -110,19 +106,17 @@ class MemoryJobStore:
         while self._queue:
             job_id = self._queue.pop()
             job = self._jobs.get(job_id)
-            if job is not None:
-                break
-        else:
-            return None
-        token = uuid.uuid4().hex
-        if job_id in self._claims:
-            # requeued by the sweeper mid-claim: leave it queued
-            self._processing.remove(job_id)
-            return None
-        self._processing.append(job_id)
-        self._status[job_id] = "running"
-        self._claims[job_id] = (token, _now() + self._lease)
-        return ClaimedJob(job_id=job_id, image=job[0], types=job[1], token=token)
+            if job is None:
+                self._status.pop(job_id, None)
+                continue
+            if job_id in self._claims:
+                continue
+            token = uuid.uuid4().hex
+            self._processing.append(job_id)
+            self._status[job_id] = "running"
+            self._claims[job_id] = (token, _now() + self._lease)
+            return ClaimedJob(job_id=job_id, image=job[0], types=job[1], token=token)
+        return None
 
     def renew(self, job_id: str, token: str) -> bool:
         claim = self._claims.get(job_id)
@@ -166,6 +160,10 @@ class MemoryJobStore:
         return requeued
 
     def _requeue(self, job_id: str) -> bool:
+        if job_id not in self._jobs:
+            self._processing.remove(job_id)
+            self._status.pop(job_id, None)
+            return True
         if len(self._queue) >= self._max_queued:
             return False
         self._processing.remove(job_id)
@@ -513,38 +511,40 @@ class TestSubmitLifecycle:
             workers._store.write_result("job", claimed.token, {"state": "done"})
         assert store._redis.get(CLAIM_PREFIX + "job") == b"other-token"
 
-    def test_execute_skips_result_write_when_cancelled(self) -> None:
-        """_execute on a job whose claim was lost writes no result —
-        the re-claimed worker owns the job."""
+    def test_execute_discards_result_when_lease_lost(self) -> None:
+        """_execute on a job whose claim is lost mid-run writes no
+        result — the re-claimed worker owns the job."""
 
-        class _NoWriteStore(MemoryJobStore):
-            def write_result(
-                self, job_id: str, token: str, result: dict[str, Any]
-            ) -> None:
-                raise AssertionError("cancelled job must not write a result")
+        class _SlowDetector(_StubDetector):
+            def detect_face_landmarks(self, image_input: Any) -> list[Any]:
+                time.sleep(2.0)  # outlast a heartbeat interval
+                return super().detect_face_landmarks(image_input)
 
+        store = RedisJobStore(
+            fakeredis.FakeStrictRedis(),
+            ttl_seconds=900,
+            max_queued=50,
+            lease_seconds=3,
+        )
         config = ApiConfig(
             redis_url="redis://localhost:6379/0",
             max_upload_bytes=20 * 1024 * 1024,
             ttl_seconds=900,
             max_queued=50,
             max_concurrent=1,
-            lease_seconds=120,
+            lease_seconds=3,
         )
-        store = _NoWriteStore()
-        workers = _Workers(store, _stub_engines(), config)
+        engines = _stub_engines()
+        engines.detector = _SlowDetector([_face()])
+        workers = _Workers(store, engines, config)
         store.submit("job", _tiny_image_bytes(), ["face"])
         claimed = store.claim()
         assert claimed is not None
-
-        # the heartbeat lost the claim mid-run and raised the cancel
-        cancelled = Event()
-        cancelled.set()
-        with (
-            pytest.raises(_JobCancelled),
-            workers._lease_heartbeat(claimed, cancelled),
-        ):
-            pass
+        # a re-claimed worker took over the job mid-run
+        store._redis.set(CLAIM_PREFIX + "job", "other-token", ex=3)
+        workers._execute(claimed)
+        assert store._redis.get(RESULT_PREFIX + "job") is None
+        assert store._redis.get(CLAIM_PREFIX + "job") == b"other-token"
 
 
 class TestSubmitValidation:
@@ -849,6 +849,8 @@ class TestRedisJobStore:
         claimed = store.claim()
         assert claimed is not None and claimed.job_id == "fresh"
         assert store.claim() is None
+        # the expired id is retired: polls see gone, not forever-queued
+        assert store.get("expired").status == "gone"
 
     def test_renew_extends_claim_and_status_lease(self) -> None:
         store = self._store(lease_seconds=120)

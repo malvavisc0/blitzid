@@ -208,8 +208,9 @@ curl -F image=@id.jpg -F types=face,ocr localhost:8000/analyze
 done returns `200` with one section per requested type (`face`,
 `ocr`, `mrz`; a failing section carries `{"error": ...}` while the
 others still return). The read claims the result — every later read
-gets `410 Gone`; unknown ids get `404`; results expire after
-`BLITZID_API_JOB_TTL_SECONDS` (default 900).
+gets `410 Gone`; unknown ids get `404` (an expired job reads `410`
+until twice the TTL past submission, then `404`); results expire
+after `BLITZID_API_JOB_TTL_SECONDS` (default 900).
 
 **POST /crop** — synchronous document QC (contour detection + one
 SCRFD pass runs in tens of ms): the perspective-corrected canonical

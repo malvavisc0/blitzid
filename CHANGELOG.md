@@ -16,9 +16,9 @@ All notable changes to this project will be documented in this file.
   `BLITZID_API_MAX_CONCURRENT_JOBS` with per-engine locks; a Redis
   queue (persistence off — RAM only) with an atomically enforced cap,
   TTL, raw-byte job payloads, and token-owned claims: worker
-  heartbeats extend the claim lease, a lost claim cancels the
-  analysis (the re-claimed worker's result wins), and the claim-lease
-  sweeper re-runs only jobs whose worker actually died. Env
+  heartbeats extend the claim lease, a lost claim discards that
+  worker's result (the re-claimed worker's result wins), and the
+  claim-lease sweeper re-runs only jobs whose worker actually died. Env
   knobs: `BLITZID_API_REDIS_URL`, `BLITZID_API_MAX_UPLOAD_MB`,
   `BLITZID_API_JOB_TTL_SECONDS`, `BLITZID_API_MAX_QUEUED_JOBS`,
   `BLITZID_API_MAX_CONCURRENT_JOBS`, `BLITZID_API_JOB_LEASE_SECONDS`.

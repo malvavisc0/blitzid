@@ -16,7 +16,7 @@ import time
 from collections.abc import Iterable
 from pathlib import Path
 
-from demo_cli import _parse_log_level
+from demo_cli import parse_log_level
 
 from blitzid import RapidOCRReader
 
@@ -37,7 +37,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-level",
-        type=_parse_log_level,
+        type=parse_log_level,
         default=logging.WARNING,
         help="Logging level (default: WARNING).",
     )

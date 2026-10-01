@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 import cv2
-from demo_cli import _parse_log_level
+from demo_cli import parse_log_level
 from tqdm import tqdm
 
 from blitzid import FaceDetectorDNN
@@ -584,7 +584,7 @@ def _build_test_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--face-padding", type=float, default=0.2)
 
     parser.add_argument("--include-root-images", action="store_true")
-    parser.add_argument("--log-level", type=_parse_log_level, default=logging.WARNING)
+    parser.add_argument("--log-level", type=parse_log_level, default=logging.WARNING)
 
 
 def main(argv: Iterable[str] | None = None) -> None:

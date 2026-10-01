@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import cv2
-from demo_cli import _parse_args
+from demo_cli import parse_args
 
 from blitzid import FaceDetectorDNN, ImageLoadError
 
@@ -251,7 +251,7 @@ def _run_demos(
 
 def main(argv: Iterable[str] | None = None) -> None:
     """CLI entrypoint."""
-    args, run_list, image_path = _parse_args(list(argv) if argv is not None else None)
+    args, run_list, image_path = parse_args(list(argv) if argv is not None else None)
 
     logging.basicConfig(level=args.log_level, format="%(levelname)s - %(message)s")
 

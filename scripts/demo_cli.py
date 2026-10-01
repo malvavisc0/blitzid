@@ -1,4 +1,4 @@
-"""CLI plumbing for face_detector_demo — argument parsing and dispatch."""
+"""CLI plumbing shared by the demo scripts — argument parsing and dispatch."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _KNOWN_DEMOS = (
 _IMAGE_DEMOS = ("basic", "metrics", "visualize", "extract", "cache")
 
 
-def _parse_log_level(value: str) -> int:
+def parse_log_level(value: str) -> int:
     """Parse a log-level string (e.g. ``"INFO"``) into a :mod:`logging` constant."""
     mapping = {
         "CRITICAL": logging.CRITICAL,
@@ -114,7 +114,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--log-level",
-        type=_parse_log_level,
+        type=parse_log_level,
         default=logging.INFO,
         help="Logging level (DEBUG, INFO, WARNING, ERROR)",
     )
@@ -165,7 +165,7 @@ def _resolve_image(args: argparse.Namespace, run_list: list[str]) -> Path | None
     return image
 
 
-def _parse_args(
+def parse_args(
     argv: list[str] | None,
 ) -> tuple[argparse.Namespace, list[str], Path | None]:
     """Parse CLI arguments and return (args, run_list, image_path)."""

@@ -32,6 +32,7 @@ Requires the ``ocr`` extra (``pip install blitzid[ocr]``).
 from __future__ import annotations
 
 import contextlib
+import importlib
 import logging
 import os
 from collections.abc import Mapping, Sequence
@@ -167,6 +168,23 @@ def _is_date_field(name: str) -> bool:
     return (
         name in _DATE_FIELD_NAMES or name.startswith("date_") or name.endswith("_date")
     )
+
+
+def _require_ocr_extra() -> None:
+    """Import the ``ocr`` extra's pydantic-ai now, or raise.
+
+    Fail-fast counterpart to the lazy import in agent construction.
+
+    Raises:
+        BlitzIDError: If the ``ocr`` extra (pydantic-ai) is not installed.
+    """
+    try:
+        importlib.import_module("pydantic_ai")
+    except ImportError as e:
+        raise BlitzIDError(
+            f"Cannot import pydantic-ai (ocr extra): {e}. "
+            "Install it: pip install blitzid[ocr]"
+        ) from e
 
 
 def _parse_date(value: object) -> object:
@@ -312,6 +330,7 @@ class StructuredOCRReader:
             raise BlitzIDError(f"timeout must be positive, got {timeout}")
         self.timeout = timeout
 
+        _require_ocr_extra()
         self.base_url = self._require_config(base_url, LLM_BASE_URL_ENV, "base_url")
         self.api_key = self._require_config(api_key, LLM_API_KEY_ENV, "api_key")
         self.model_name = self._require_config(model_name, LLM_MODEL_ENV, "model_name")

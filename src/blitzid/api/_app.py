@@ -13,7 +13,7 @@ Env knobs (see ``.env.example``): ``BLITZID_API_REDIS_URL``,
 ``BLITZID_API_MAX_UPLOAD_MB``, ``BLITZID_API_JOB_TTL_SECONDS``,
 ``BLITZID_API_MAX_QUEUED_JOBS``, ``BLITZID_API_MAX_CONCURRENT_JOBS``,
 ``BLITZID_API_JOB_LEASE_SECONDS`` — plus ``BLITZID_MODELS_DIR`` for
-the engine weights.
+the engine weights and ``BLITZID_LLM_*`` for the structured engine.
 """
 
 from __future__ import annotations
@@ -24,14 +24,21 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Any
 
 import redis
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 
-from .. import DocumentCropper, FaceDetectorDNN, MRZReader, RapidOCRReader
-from ..exceptions import BlitzIDError
+from .. import (
+    DocumentCropper,
+    FaceDetectorDNN,
+    FaceVerifier,
+    MRZReader,
+    RapidOCRReader,
+    StructuredOCRReader,
+)
+from ..exceptions import BlitzIDError, FaceVerificationError
 from ._analyze import Engines, run_job
 from ._jobs import (
     ClaimedJob,
@@ -40,10 +47,10 @@ from ._jobs import (
     RedisJobStore,
     StaleClaimError,
 )
-from ._schemas import CropResponse, HealthResponse, JobCreated
+from ._schemas import CropResponse, HealthResponse, JobCreated, VerifyResponse
 from ._upload import encode_jpeg_b64, validate_image_upload
 
-_ANALYSIS_TYPES = frozenset({"face", "ocr", "mrz"})
+_ANALYSIS_TYPES = frozenset({"face", "ocr", "mrz", "structured"})
 _SIDES = frozenset({"front", "back", "unknown"})
 _LOG = logging.getLogger(__name__)
 
@@ -87,6 +94,12 @@ def _build_engines() -> Engines:
     except BlitzIDError as e:
         _LOG.warning("face engine unavailable: %s", e)
         detector = None
+    verifier = None
+    if detector is not None:
+        try:
+            verifier = FaceVerifier(detector=detector, log_level=logging.WARNING)
+        except BlitzIDError as e:
+            _LOG.warning("verification engine unavailable: %s", e)
     ocr_reader = None
     mrz_reader = None
     try:
@@ -94,7 +107,18 @@ def _build_engines() -> Engines:
         mrz_reader = MRZReader(reader=ocr_reader, log_level=logging.WARNING)
     except BlitzIDError as e:
         _LOG.warning("ocr/mrz engines unavailable: %s", e)
-    return Engines(detector=detector, ocr_reader=ocr_reader, mrz_reader=mrz_reader)
+    structured_reader = None
+    try:
+        structured_reader = StructuredOCRReader(log_level=logging.WARNING)
+    except BlitzIDError as e:
+        _LOG.warning("structured engine unavailable: %s", e)
+    return Engines(
+        detector=detector,
+        ocr_reader=ocr_reader,
+        mrz_reader=mrz_reader,
+        verifier=verifier,
+        structured_reader=structured_reader,
+    )
 
 
 class _Workers:
@@ -289,7 +313,7 @@ def _parse_types(values: list[str]) -> list[str]:
     types = [value for value in flat if value]
     if not types:
         raise HTTPException(
-            422, "at least one analysis type is required: face, ocr, mrz"
+            422, "at least one analysis type is required: face, ocr, mrz, structured"
         )
     unknown = sorted(set(types) - _ANALYSIS_TYPES)
     if unknown:
@@ -304,6 +328,8 @@ def _engine_missing(analysis_type: str, engines: Engines) -> bool:
         return engines.detector is None
     if analysis_type == "mrz":
         return engines.mrz_reader is None
+    if analysis_type == "structured":
+        return engines.structured_reader is None or engines.ocr_reader is None
     return engines.ocr_reader is None
 
 
@@ -316,7 +342,8 @@ def _ensure_engines(types: list[str], engines: Engines) -> None:
         raise HTTPException(
             400,
             f"analysis engine(s) unavailable: {', '.join(unavailable)}; "
-            "ocr/mrz need the blitzid[ocr] extra, face needs the SCRFD weights",
+            "ocr/mrz need the blitzid[ocr] extra, face needs the SCRFD "
+            "weights, structured needs the ocr extra and BLITZID_LLM_* config",
         )
 
 
@@ -335,7 +362,7 @@ def _submit_safely(
 
 
 def _register_routes(app: FastAPI) -> None:
-    """Register the /analyze, /jobs, /crop, and /health routes."""
+    """Register the /analyze, /jobs, /crop, /verify, and /health routes."""
 
     @app.post("/analyze", status_code=202, response_model=JobCreated)
     def submit_job(
@@ -386,6 +413,43 @@ def _register_routes(app: FastAPI) -> None:
             verdict=report.verdict,
         )
 
+    @app.post("/verify", response_model=VerifyResponse)
+    def verify_faces(
+        request: Request,
+        image1: Annotated[UploadFile, File()],
+        image2: Annotated[UploadFile, File()],
+        threshold: Annotated[float | None, Form()] = None,
+    ) -> VerifyResponse:
+        """Compare the best face in two images (synchronous)."""
+        engines: Engines = request.app.state.engines
+        if engines.verifier is None:
+            raise HTTPException(
+                400,
+                "face verification engine unavailable (SCRFD detector and "
+                "ArcFace weights are required)",
+            )
+        if threshold is not None and not -1.0 <= threshold <= 1.0:
+            raise HTTPException(422, "threshold must be between -1.0 and 1.0")
+        config: ApiConfig = request.app.state.config
+        img1 = validate_image_upload(image1.file.read(), config.max_upload_bytes)
+        img2 = validate_image_upload(image2.file.read(), config.max_upload_bytes)
+        try:
+            with engines.detector_lock:
+                result = engines.verifier.verify(img1, img2)
+        except FaceVerificationError as e:
+            raise HTTPException(422, str(e)) from e
+        if threshold is not None:
+            result = replace(
+                result, threshold=threshold, verified=result.similarity >= threshold
+            )
+        return VerifyResponse(
+            verified=result.verified,
+            similarity=result.similarity,
+            threshold=result.threshold,
+            processing_time_ms=round(result.processing_time * 1000, 1),
+            backend=result.backend,
+        )
+
     @app.get("/health", response_model=HealthResponse)
     def health(request: Request, response: Response) -> HealthResponse:
         """Report engine, Redis, and job availability for orchestration.
@@ -404,8 +468,10 @@ def _register_routes(app: FastAPI) -> None:
             status="ok" if redis_ok else "degraded",
             models={
                 "face": engines.detector is not None,
+                "verify": engines.verifier is not None,
                 "ocr": engines.ocr_reader is not None,
                 "mrz": engines.mrz_reader is not None,
+                "structured": engines.structured_reader is not None,
             },
             redis=redis_ok,
             jobs=store.counts(),

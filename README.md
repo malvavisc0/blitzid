@@ -152,8 +152,9 @@ resolution, sharpness, brightness, and a side-aware face-presence check
 face). Returns the crop plus a `QualityReport` verdict.
 
 **HTTP API and Docker.** The `api` extra adds a FastAPI service: an
-async job queue (Redis, persistence disabled) for face/OCR/MRZ, a
-synchronous `/crop` for document QC, and `/health` for orchestration.
+async job queue (Redis, persistence disabled) for
+face/OCR/MRZ/structured, synchronous `/crop` (document QC) and
+`/verify` (1:1 face comparison), and `/health` for orchestration.
 `docker compose up` runs it with all weights baked in.
 
 **Inputs.** File paths, NumPy arrays, and PIL Images.
@@ -161,10 +162,10 @@ synchronous `/crop` for document QC, and `/health` for orchestration.
 ## HTTP API
 
 The `api` extra (`pip install blitzid[api]`) adds an HTTP service over
-the library: async jobs for the analyses, a synchronous document-QC
-endpoint, and a health check. Docker is the primary deployment: the
-image bakes all weights for instant cold start and talks to a RAM-only
-Redis.
+the library: async jobs for the analyses, synchronous document-QC and
+face-verification endpoints, and a health check. Docker is the primary
+deployment: the image bakes all weights for instant cold start and
+talks to a RAM-only Redis.
 
 ```bash
 docker compose up
@@ -173,10 +174,13 @@ curl http://localhost:8000/health
 
 **POST /analyze** submits a job (`multipart/form-data`): an `image`
 file (any OpenCV-decodable format; PDFs get a precise `415`) and
-`types` (repeated and/or comma-separated: `face`, `ocr`, `mrz`).
+`types` (repeated and/or comma-separated: `face`, `ocr`, `mrz`,
+`structured` — the last rebuilds the OCR text into a typed record via
+the LLM, so it also needs the `BLITZID_LLM_*` config).
 Validation is eager, before the job exists: `422` unknown type or
 missing fields, `400` undecodable bytes or an analysis whose engine is
-unavailable (`ocr`/`mrz` without the `ocr` extra), `413` above the
+unavailable (`ocr`/`mrz` without the `ocr` extra, `structured` without
+the extra or the LLM config), `413` above the
 upload cap, `503` + `Retry-After` when the queue is full or Redis is
 down. Accepted jobs return `202`:
 
@@ -187,9 +191,9 @@ curl -F image=@id.jpg -F types=face,ocr localhost:8000/analyze
 
 **GET /jobs/{job_id}** polls: `{"status": "queued"}` / `running`; done
 returns `200` with one section per requested type (`face`, `ocr`,
-`mrz`; a failing section carries `{"error": ...}` while the others
-still return). The read claims the result, so every later read gets
-`410 Gone`; unknown ids get `404` (an expired job reads `410` until
+`mrz`, `structured`; a failing section carries `{"error": ...}` while
+the others still return). The read claims the result, so every later
+read gets `410 Gone`; unknown ids get `404` (an expired job reads `410` until
 twice the TTL past submission, then `404`); results expire after
 `BLITZID_API_JOB_TTL_SECONDS` (default 900).
 
@@ -222,6 +226,17 @@ What a done result looks like on the specimen ID (abbreviated):
       "optional_data1": "999999…", "optional_data2": ""
     },
     "processing_time_ms": 1059.4
+  },
+  "structured": {
+    "record": {
+      "document_type": "id",
+      "fields": [
+        {"name": "surname", "value": "DE BRUIJN", "confidence": 0.95},
+        {"name": "date_of_birth", "value": "1965-03-10", "confidence": 0.9}
+      ],
+      "raw_text": "Specimen\nDE BRUIJN\n…"
+    },
+    "processing_time_ms": 2450.3
   }
 }
 ```
@@ -242,6 +257,22 @@ curl -F image=@id.jpg localhost:8000/crop
 
 The crop is the canonical image to keep and to re-submit to `/analyze`
 for cleaner OCR/MRZ.
+
+**POST /verify** is synchronous 1:1 face comparison: multipart fields
+`image1` and `image2` (same upload rules as `/analyze`) and an
+optional `threshold` form field (`-1.0`–`1.0`, overriding the service
+default `0.4`) re-deciding the verdict. The best face in each image is
+aligned to the ArcFace template and compared by cosine similarity; an
+image with no detectable face is `422`. The verifier (SCRFD + ArcFace
+weights) loads at service startup alongside the other engines and
+shows as `verify` in `/health`, so the first call carries no warm-up
+at the cost of the extra weights in every deployment's memory:
+
+```bash
+curl -F image1=@id.jpg -F image2=@selfie.jpg localhost:8000/verify
+# {"verified": true, "similarity": 0.71, "threshold": 0.4,
+#  "processing_time_ms": 241.5, "backend": "ONNXRuntime"}
+```
 
 **GET /health** reports engine, Redis, and job availability for
 container orchestration. It returns `503` when the job store is

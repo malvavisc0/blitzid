@@ -11,7 +11,14 @@ from typing import Any
 
 import numpy as np
 
-from .. import Face, FaceDetectorDNN, MRZReader, RapidOCRReader
+from .. import (
+    Face,
+    FaceDetectorDNN,
+    FaceVerifier,
+    MRZReader,
+    RapidOCRReader,
+    StructuredOCRReader,
+)
 from .._image import crop_with_padding
 from ..exceptions import BlitzIDError, ModelError
 from ._upload import decode_image_bytes, dims_within_bounds, encode_jpeg_b64
@@ -24,16 +31,20 @@ class Engines:
     """Shared analysis engine singletons with one lock per engine.
 
     The locks serialize access to engines that are not thread-safe:
-    the cache-less detector and the RapidOCR pipeline shared by the
-    OCR and MRZ sections. Fields are None when an engine is
-    unavailable (missing ``ocr`` extra, missing weights).
+    the cache-less detector, the RapidOCR pipeline shared by the OCR,
+    MRZ, and structured sections, and the LLM reader's agent cache.
+    Fields are None when an engine is unavailable (missing ``ocr``
+    extra, missing weights, missing LLM configuration).
     """
 
     detector: FaceDetectorDNN | None
     ocr_reader: RapidOCRReader | None
     mrz_reader: MRZReader | None
+    verifier: FaceVerifier | None = None
+    structured_reader: StructuredOCRReader | None = None
     detector_lock: Lock = field(default_factory=Lock)
     ocr_lock: Lock = field(default_factory=Lock)
+    structured_lock: Lock = field(default_factory=Lock)
 
 
 def run_job(image: bytes, types: list[str], engines: Engines) -> dict[str, Any]:
@@ -118,12 +129,29 @@ def _run_mrz(img: np.ndarray, engines: Engines) -> dict[str, Any]:
     return {"record": asdict(record)}
 
 
+def _run_structured(img: np.ndarray, engines: Engines) -> dict[str, Any]:
+    """Read text lines, then rebuild a typed record via the LLM."""
+    reader = engines.structured_reader
+    ocr_reader = engines.ocr_reader
+    if reader is None or ocr_reader is None:
+        raise ModelError(
+            "structured analysis requires the blitzid[ocr] extra "
+            "and LLM configuration (BLITZID_LLM_*)"
+        )
+    with engines.ocr_lock:
+        texts = ocr_reader.read(img)
+    with engines.structured_lock:
+        record = reader.read(texts)
+    return {"record": record.model_dump(mode="json")}
+
+
 _SECTION_RUNNERS: Mapping[str, Callable[[np.ndarray, Engines], dict[str, Any]]] = (
     MappingProxyType(
         {
             "face": _run_face,
             "ocr": _run_ocr,
             "mrz": _run_mrz,
+            "structured": _run_structured,
         }
     )
 )

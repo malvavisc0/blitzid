@@ -24,13 +24,18 @@ import numpy as np
 import pytest
 
 from blitzid import (
+    ExtractedField,
     Face,
     FaceDetectorDNN,
+    FaceVerificationError,
+    ModelError,
     MRZError,
     MRZReader,
     MRZRecord,
     OCRText,
     RapidOCRReader,
+    StructuredOCR,
+    VerificationResult,
 )
 
 pytest.importorskip("fastapi")
@@ -215,6 +220,30 @@ class _StubMRZReader:
         return self._record
 
 
+class _StubVerifier:
+    """FaceVerifier stand-in returning a fixed result or error."""
+
+    def __init__(self, result: VerificationResult | Exception) -> None:
+        self._result = result
+
+    def verify(self, image1: Any, image2: Any) -> VerificationResult:
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+class _StubStructuredReader:
+    """StructuredOCRReader stand-in returning a fixed record or error."""
+
+    def __init__(self, record: StructuredOCR | Exception) -> None:
+        self._record = record
+
+    def read(self, texts: Any, kind: str = "auto") -> StructuredOCR:
+        if isinstance(self._record, Exception):
+            raise self._record
+        return self._record
+
+
 def _face() -> Face:
     return Face(
         bbox=(10, 10, 60, 60),
@@ -244,15 +273,41 @@ def _mrz_record() -> MRZRecord:
     )
 
 
+def _structured_record() -> StructuredOCR:
+    return StructuredOCR(
+        document_type="id",
+        fields=[ExtractedField(name="surname", value="MUSTERMANN", confidence=0.9)],
+        raw_text="ID",
+    )
+
+
+def _verification() -> VerificationResult:
+    return VerificationResult(
+        verified=True,
+        similarity=0.97,
+        threshold=0.4,
+        processing_time=0.123,
+        backend="ONNXRuntime",
+    )
+
+
 def _stub_engines(
     faces: list[Any] | Exception | None = None,
     ocr_texts: list[OCRText] | Exception | None = None,
     mrz: MRZRecord | Exception | None = None,
+    verification: VerificationResult | Exception | None = None,
+    structured: StructuredOCR | Exception | None = None,
 ) -> Engines:
     return Engines(
         detector=_StubDetector([_face()] if faces is None else faces),
         ocr_reader=_StubOCRReader([_ocr_text()] if ocr_texts is None else ocr_texts),
         mrz_reader=_StubMRZReader(_mrz_record() if mrz is None else mrz),
+        verifier=_StubVerifier(
+            _verification() if verification is None else verification
+        ),
+        structured_reader=_StubStructuredReader(
+            _structured_record() if structured is None else structured
+        ),
     )
 
 
@@ -634,7 +689,13 @@ class TestHealth:
             assert response.status_code == 200
             body = response.json()
             assert body["status"] == "ok"
-            assert body["models"] == {"face": True, "ocr": True, "mrz": True}
+            assert body["models"] == {
+                "face": True,
+                "verify": True,
+                "ocr": True,
+                "mrz": True,
+                "structured": True,
+            }
             assert body["redis"] is True
             assert set(body["jobs"]) == {"queued", "running", "stored"}
 
@@ -646,7 +707,13 @@ class TestHealth:
             body = response.json()
             assert body["status"] == "degraded"
             assert body["redis"] is False
-            assert body["models"] == {"face": False, "ocr": False, "mrz": False}
+            assert body["models"] == {
+                "face": False,
+                "verify": False,
+                "ocr": False,
+                "mrz": False,
+                "structured": False,
+            }
 
     def test_missing_engines_stay_200(self) -> None:
         engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
@@ -769,6 +836,202 @@ class TestCrop:
             response = self._crop(client, synthetic_document(), side="front")
             assert response.status_code == 200
             assert detector.observed == [True]
+
+
+class TestStructuredJob:
+    def test_structured_section_returns_record(self) -> None:
+        engines = _stub_engines()
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="structured")
+            assert response.status_code == 202
+            body = _poll_done(client, response.json()["job_id"])
+            record = body["structured"]["record"]
+            assert record["document_type"] == "id"
+            assert record["fields"][0]["name"] == "surname"
+            assert record["fields"][0]["value"] == "MUSTERMANN"
+            assert record["raw_text"] == "ID"
+            assert "processing_time_ms" in body["structured"]
+
+    def test_structured_error_is_section_error(self) -> None:
+        engines = _stub_engines(structured=ModelError("LLM endpoint unreachable"))
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="structured,face")
+            body = _poll_done(client, response.json()["job_id"])
+            assert body["structured"]["error"] == "LLM endpoint unreachable"
+            assert "faces" in body["face"]
+
+    def test_structured_engine_unavailable_400(self) -> None:
+        engines = Engines(
+            detector=None,
+            ocr_reader=_StubOCRReader([_ocr_text()]),
+            mrz_reader=None,
+            structured_reader=None,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            assert _submit(client, types="structured").status_code == 400
+            assert _submit(client, types="ocr").status_code == 202
+
+    def test_structured_requires_ocr_reader_400(self) -> None:
+        engines = Engines(
+            detector=None,
+            ocr_reader=None,
+            mrz_reader=None,
+            structured_reader=_StubStructuredReader(_structured_record()),
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            assert _submit(client, types="structured").status_code == 400
+
+
+class TestVerify:
+    def _verify(self, client: TestClient, **data: str) -> Any:
+        return client.post(
+            "/verify",
+            files={
+                "image1": ("a.png", _tiny_image_bytes(), "image/png"),
+                "image2": ("b.png", _tiny_image_bytes(), "image/png"),
+            },
+            data=data,
+        )
+
+    def test_verify_returns_result(self) -> None:
+        engines = _stub_engines()
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = self._verify(client)
+            assert response.status_code == 200
+            body = response.json()
+            assert body["verified"] is True
+            assert body["similarity"] == pytest.approx(0.97)
+            assert body["threshold"] == pytest.approx(0.4)
+            assert body["processing_time_ms"] == pytest.approx(123.0)
+            assert body["backend"] == "ONNXRuntime"
+
+    def test_threshold_override_redecides_both_ways(self) -> None:
+        strict = _stub_engines(
+            verification=VerificationResult(
+                verified=True,
+                similarity=0.5,
+                threshold=0.4,
+                processing_time=0.01,
+                backend="ONNXRuntime",
+            )
+        )
+        with _client(store=MemoryJobStore(), engines=strict) as client:
+            body = self._verify(client, threshold="0.9").json()
+            assert body["verified"] is False
+            assert body["threshold"] == pytest.approx(0.9)
+        lenient = _stub_engines(
+            verification=VerificationResult(
+                verified=False,
+                similarity=0.3,
+                threshold=0.4,
+                processing_time=0.01,
+                backend="ONNXRuntime",
+            )
+        )
+        with _client(store=MemoryJobStore(), engines=lenient) as client:
+            body = self._verify(client, threshold="0.2").json()
+            assert body["verified"] is True
+            assert body["threshold"] == pytest.approx(0.2)
+
+    def test_no_face_422(self) -> None:
+        engines = _stub_engines(
+            verification=FaceVerificationError("No face detected in image1")
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = self._verify(client)
+            assert response.status_code == 422
+            assert "No face detected" in response.json()["detail"]
+
+    def test_invalid_threshold_422(self) -> None:
+        with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
+            assert self._verify(client, threshold="2").status_code == 422
+
+    def test_engine_unavailable_400(self) -> None:
+        engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            assert self._verify(client).status_code == 400
+
+    def test_missing_image_422(self) -> None:
+        with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
+            response = client.post(
+                "/verify",
+                files={"image1": ("a.png", _tiny_image_bytes(), "image/png")},
+            )
+            assert response.status_code == 422
+
+    def test_corrupt_bytes_400(self) -> None:
+        with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
+            response = client.post(
+                "/verify",
+                files={
+                    "image1": ("a.png", _tiny_image_bytes(), "image/png"),
+                    "image2": ("b.png", b"garbage", "image/png"),
+                },
+            )
+            assert response.status_code == 400
+
+    def test_pdf_bytes_415(self) -> None:
+        with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
+            response = client.post(
+                "/verify",
+                files={
+                    "image1": ("a.pdf", b"%PDF-1.4 x", "application/pdf"),
+                    "image2": ("b.png", _tiny_image_bytes(), "image/png"),
+                },
+            )
+            assert response.status_code == 415
+
+    def test_oversized_413(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        synthetic_document: Callable[..., np.ndarray],
+    ) -> None:
+        with _env_client(
+            monkeypatch,
+            store=MemoryJobStore(),
+            engines=_stub_engines(),
+            BLITZID_API_MAX_UPLOAD_MB="1",
+        ) as client:
+            response = client.post(
+                "/verify",
+                files={
+                    "image1": (
+                        "a.png",
+                        _image_bytes(synthetic_document()),
+                        "image/png",
+                    ),
+                    "image2": ("b.png", _tiny_image_bytes(), "image/png"),
+                },
+            )
+            assert response.status_code == 413
+
+    def test_verify_holds_detector_lock(self) -> None:
+        """/verify must serialize engine access via the detector lock."""
+
+        class _LockCheckingVerifier(_StubVerifier):
+            def __init__(self, lock: Any) -> None:
+                super().__init__(_verification())
+                self._lock = lock
+                self.observed: list[bool] = []
+
+            def verify(self, image1: Any, image2: Any) -> VerificationResult:
+                self.observed.append(self._lock.locked())
+                return super().verify(image1, image2)
+
+        stub = _stub_engines()
+        verifier = _LockCheckingVerifier(stub.detector_lock)
+        engines = Engines(
+            detector=stub.detector,
+            ocr_reader=stub.ocr_reader,
+            mrz_reader=stub.mrz_reader,
+            verifier=verifier,
+            structured_reader=stub.structured_reader,
+            detector_lock=stub.detector_lock,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = self._verify(client)
+            assert response.status_code == 200
+            assert verifier.observed == [True]
 
 
 class TestRedisJobStore:

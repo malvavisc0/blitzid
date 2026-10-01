@@ -26,6 +26,16 @@ class CropResponse(BaseModel):
     verdict: str
 
 
+class VerifyResponse(BaseModel):
+    """200 response for POST /verify — 1:1 face comparison."""
+
+    verified: bool
+    similarity: float
+    threshold: float
+    processing_time_ms: float
+    backend: str
+
+
 class HealthResponse(BaseModel):
     """200 response for GET /health — engine/Redis/job availability."""
 

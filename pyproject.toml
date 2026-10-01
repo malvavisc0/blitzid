@@ -8,12 +8,23 @@ license = "MIT"
 authors = [
     { name = "Malvavisc0" },
 ]
+keywords = [
+    "mrz",
+    "ocr",
+    "face-detection",
+    "id-document",
+    "icao-9303",
+    "scrfd",
+    "onnx",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Image Recognition",
+    "Typing :: Typed",
 ]
 
 # ── Core dependencies (always installed) ───────────────────

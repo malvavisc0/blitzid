@@ -29,6 +29,9 @@ All notable changes to this project will be documented in this file.
   `ghcr.io/malvavisc0/blitzid` via `.github/workflows/docker.yml`,
   gated on the (now reusable) CI gate plus a compose smoke test that
   submits a real face/ocr/mrz job and polls it to completion.
+- PyPI publishing: tag pushes matching the package version build and
+  upload the sdist/wheel to PyPI via `.github/workflows/publish.yml`
+  (trusted publishing — no API tokens), gated on the same CI matrix.
 - `DocumentCropper` / `QualityReport` (reading domain, pure CV):
   locates the largest plausible document quad via Canny edges +
   contour approximation, warps it into an axis-aligned canonical crop

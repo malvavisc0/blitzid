@@ -1,4 +1,4 @@
-"""Face record and metrics dataclasses for the detector API."""
+"""Face record, metrics, and verification dataclasses for the face API."""
 
 from __future__ import annotations
 
@@ -17,14 +17,14 @@ class Face:
     Attributes:
         bbox: ``(x, y, w, h)`` in image pixels.
         confidence: Detection score in ``[0, 1]``.
-        landmarks: ``(x, y)`` points in image pixels — right eye, left eye,
-            nose tip, right mouth corner, left mouth corner (SCRFD order).
-            Empty when no points are available.
+        landmarks: Subpixel ``(x, y)`` points in image pixels — right eye,
+            left eye, nose tip, right mouth corner, left mouth corner
+            (SCRFD order). Empty when no points are available.
     """
 
     bbox: tuple[int, int, int, int]
     confidence: float
-    landmarks: tuple[tuple[int, int], ...] = ()
+    landmarks: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass
@@ -48,6 +48,26 @@ class DetectionMetrics:
     backend: str
     num_faces: int
     cache_hit: bool = False
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """Outcome of a 1:1 face verification.
+
+    Attributes:
+        verified: Whether the similarity met the decision threshold.
+        similarity: Cosine similarity in ``[-1.0, 1.0]``.
+        threshold: The decision threshold that was applied.
+        processing_time: End-to-end verification time in seconds —
+            image loading, face detection, embedding, and comparison.
+        backend: Backend identifier, e.g. ``"ONNXRuntime"``.
+    """
+
+    verified: bool
+    similarity: float
+    threshold: float
+    processing_time: float
+    backend: str = "ONNXRuntime"
 
 
 def as_tuple(face: Face) -> tuple[int, int, int, int, float]:

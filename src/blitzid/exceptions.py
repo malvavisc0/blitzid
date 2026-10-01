@@ -15,3 +15,7 @@ class ImageError(BlitzIDError):
 
 class MRZError(BlitzIDError):
     """MRZ not found, malformed, or failed check-digit validation."""
+
+
+class FaceVerificationError(BlitzIDError):
+    """Face verification failure (no detectable face, missing landmarks)."""

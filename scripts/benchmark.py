@@ -21,7 +21,7 @@ from pathlib import Path
 
 import onnxruntime as ort  # type: ignore[import-untyped]
 
-from blitzid import FaceDetectorDNN
+from blitzid import FaceDetectorDNN, FaceVerifier
 
 PRESETS = ("fast", "balanced", "accurate")
 _INIT_RUNS = 5
@@ -129,6 +129,23 @@ def _benchmark_reading(
     return (name, "read", init_ms, statistics.median(timings))
 
 
+def _benchmark_verification(image: Path, runs: int) -> tuple[str, str, float, float]:
+    """Time FaceVerifier init and warm 1:1 verification."""
+    init_timings = []
+    for _ in range(_INIT_RUNS):
+        start = time.perf_counter()
+        verifier = FaceVerifier(log_level=logging.WARNING)
+        init_timings.append((time.perf_counter() - start) * 1000)
+
+    timings = _timed_ms(lambda: verifier.verify(image, image), runs)
+    return (
+        "FaceVerifier",
+        f"verify (same image twice: {image.name})",
+        statistics.median(init_timings),
+        statistics.median(timings),
+    )
+
+
 def _benchmark_ocr(mrz_image: Path, runs: int) -> list[tuple[str, str, float, float]]:
     """Benchmark RapidOCRReader and MRZReader; skipped without the extra."""
     try:
@@ -217,6 +234,7 @@ def main(argv: Iterable[str] | None = None) -> None:
 
     rows = [_benchmark_detection(preset, args.image, args.runs) for preset in PRESETS]
     rows.append(_benchmark_cache(args.image, args.runs))
+    rows.append(_benchmark_verification(args.image, args.runs))
     rows.extend(_benchmark_ocr(args.mrz_image, args.runs))
 
     _print_header(args.markdown)

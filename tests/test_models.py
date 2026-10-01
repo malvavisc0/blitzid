@@ -5,6 +5,7 @@ Uses mocking to avoid actual downloads.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import urllib.error
 from pathlib import Path
@@ -14,8 +15,31 @@ import pytest
 
 from blitzid._models import ModelManager, default_model_dir
 from blitzid.exceptions import ModelError
+from blitzid.face._arcface import (
+    ARCFACE_MODEL_FILENAME,
+    ARCFACE_MODEL_URL,
+)
 
 logger = logging.getLogger("test_models")
+
+
+class _FakeResponse:
+    """Minimal ``urlopen`` result: a chunked-read context manager."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            size = len(self._payload)
+        chunk, self._payload = self._payload[:size], self._payload[size:]
+        return chunk
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
 
 
 class TestDefaultModelDir:
@@ -51,8 +75,9 @@ class TestModelManager:
     def test_downloads_disabled_raises(self, tmp_path: Path) -> None:
         """Missing model + allow_downloads=False → ModelError."""
         mgr = ModelManager(tmp_path, logger, allow_downloads=False)
-        with pytest.raises(ModelError, match="Missing model file"):
+        with pytest.raises(ModelError, match="Missing model file") as excinfo:
             mgr.ensure_model_exists()
+        assert str(mgr.model_path) in str(excinfo.value)
 
     def test_existing_model_not_downloaded(self, tmp_path: Path) -> None:
         mgr = ModelManager(tmp_path, logger, allow_downloads=True)
@@ -107,3 +132,115 @@ class TestModelManager:
             pytest.raises(ModelError, match="Failed to load"),
         ):
             mgr.load_session()
+
+
+class TestModelManagerCustomModel:
+    def test_custom_filename_and_url(self, tmp_path: Path) -> None:
+        mgr = ModelManager(
+            tmp_path,
+            logger,
+            filename="arcface.onnx",
+            url="https://example.com/arcface.onnx",
+        )
+        assert mgr.model_path == tmp_path / "arcface.onnx"
+        assert mgr.url == "https://example.com/arcface.onnx"
+
+    def test_scrfd_defaults_without_overrides(self, tmp_path: Path) -> None:
+        mgr = ModelManager(tmp_path, logger)
+        assert mgr.model_path.name == "scrfd_2.5g.onnx"
+        assert "buffalo_m" in mgr.url
+
+    def test_custom_url_is_downloaded(self, tmp_path: Path) -> None:
+        """The url override is the URL actually fetched, not MODEL_URL."""
+        mgr = ModelManager(
+            tmp_path,
+            logger,
+            filename="arcface.onnx",
+            url="https://example.com/arcface.onnx",
+            sha256="",
+        )
+        with patch(
+            "blitzid._models.urllib.request.urlopen",
+            return_value=_FakeResponse(b"weights"),
+        ) as mock_urlopen:
+            mgr._download_model()
+
+        request = mock_urlopen.call_args[0][0]
+        assert request.full_url == "https://example.com/arcface.onnx"
+        assert mgr.model_path.read_bytes() == b"weights"
+
+    def test_arcface_manager_downloads_arcface_url(self, tmp_path: Path) -> None:
+        """The FaceVerifier model manager fetches the recognition URL."""
+        payload = b"weights"
+        mgr = ModelManager(
+            tmp_path,
+            logger,
+            filename=ARCFACE_MODEL_FILENAME,
+            url=ARCFACE_MODEL_URL,
+            sha256=hashlib.sha256(payload).hexdigest(),
+        )
+        with patch(
+            "blitzid._models.urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ) as mock_urlopen:
+            mgr._download_model()
+
+        request = mock_urlopen.call_args[0][0]
+        assert request.full_url == ARCFACE_MODEL_URL
+        assert mgr.model_path.name == ARCFACE_MODEL_FILENAME
+
+
+class TestDigestVerification:
+    def test_matching_digest_accepted(self, tmp_path: Path) -> None:
+        payload = b"weights"
+        digest = hashlib.sha256(payload).hexdigest()
+        mgr = ModelManager(
+            tmp_path,
+            logger,
+            filename="arcface.onnx",
+            url="https://example.com/arcface.onnx",
+            sha256=digest,
+        )
+        with patch(
+            "blitzid._models.urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            mgr._download_model()
+
+        assert mgr.model_path.read_bytes() == payload
+
+    def test_mismatched_digest_rejected(self, tmp_path: Path) -> None:
+        mgr = ModelManager(
+            tmp_path,
+            logger,
+            filename="arcface.onnx",
+            url="https://example.com/arcface.onnx",
+            sha256="0" * 64,
+        )
+        with (
+            patch(
+                "blitzid._models.urllib.request.urlopen",
+                return_value=_FakeResponse(b"weights"),
+            ),
+            pytest.raises(ModelError, match="Digest mismatch"),
+        ):
+            mgr._download_model()
+
+        assert not mgr.model_path.exists()
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_empty_digest_skips_check(self, tmp_path: Path) -> None:
+        mgr = ModelManager(
+            tmp_path,
+            logger,
+            filename="arcface.onnx",
+            url="https://example.com/arcface.onnx",
+            sha256="",
+        )
+        with patch(
+            "blitzid._models.urllib.request.urlopen",
+            return_value=_FakeResponse(b"weights"),
+        ):
+            mgr._download_model()
+
+        assert mgr.model_path.read_bytes() == b"weights"

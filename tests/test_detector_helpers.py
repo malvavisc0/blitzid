@@ -305,8 +305,20 @@ class TestMapDetectionsToFaces:
         detections = [(10.0, 20.0, 50.0, 80.0, 0.9, ((20.0, 30.0),))]
         faces = map_detections_to_faces(detections, scale=0.5, image_size=(100, 100))
         assert faces == [
-            Face(bbox=(20, 40, 80, 60), confidence=0.9, landmarks=((40, 60),))
+            Face(bbox=(20, 40, 80, 60), confidence=0.9, landmarks=((40.0, 60.0),))
         ]
+
+    def test_landmarks_keep_subpixel_precision(self) -> None:
+        detections = [(10.0, 20.0, 50.0, 80.0, 0.9, ((20.4, 30.6),))]
+        faces = map_detections_to_faces(detections, scale=0.5, image_size=(100, 100))
+        x, y = faces[0].landmarks[0]
+        assert x == pytest.approx(40.8)
+        assert y == pytest.approx(61.2)
+
+    def test_landmarks_clip_to_image(self) -> None:
+        detections = [(10.0, 20.0, 50.0, 80.0, 0.9, ((200.0, -5.0),))]
+        faces = map_detections_to_faces(detections, scale=1.0, image_size=(100, 80))
+        assert faces[0].landmarks == ((99.0, 0.0),)
 
     def test_drops_degenerate_boxes(self) -> None:
         detections = [(-5.0, -5.0, -1.0, -1.0, 0.8, ())]

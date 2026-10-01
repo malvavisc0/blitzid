@@ -111,6 +111,7 @@ class FaceDetectorDNN:
         multi_scale: bool = False,
         scales: tuple[float, ...] = (1.0, 1.5, 2.0),
         det_size: tuple[int, int] = (640, 640),
+        allow_downloads: bool = True,
     ):
         self._validate_parameters(
             confidence_threshold, min_face_size, nms_threshold, max_cache_size, det_size
@@ -122,7 +123,9 @@ class FaceDetectorDNN:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
 
-        self.model_manager = ModelManager(model_dir, self.logger)
+        self.model_manager = ModelManager(
+            model_dir, self.logger, allow_downloads=allow_downloads
+        )
         self.session = self.model_manager.load_session()
         self.backend = "ONNXRuntime"
 
@@ -238,8 +241,11 @@ class FaceDetectorDNN:
             )
         FaceDetectorDNN._validate_det_size(det_size)
 
-    def _detect_from_array(self, img: np.ndarray) -> tuple[list[Face], float, bool]:
-        """Detect faces from an already-loaded array.
+    def detect_from_array(self, img: np.ndarray) -> tuple[list[Face], float, bool]:
+        """Detect faces in an already-loaded BGR image array.
+
+        Args:
+            img: Image array (HWC BGR, ``uint8``).
 
         Returns:
             ``(faces, processing_time, cache_hit)``. ``processing_time``
@@ -274,7 +280,7 @@ class FaceDetectorDNN:
     def detect_face_landmarks(self, image_input: ImageInput) -> list[Face]:
         """Detect faces with landmarks.  Returns list of :class:`Face`."""
         img = load_image(image_input, self.logger)
-        faces, _, _ = self._detect_from_array(img)
+        faces, _, _ = self.detect_from_array(img)
         self._log_results(image_input, faces)
         return faces
 
@@ -283,7 +289,7 @@ class FaceDetectorDNN:
         img = load_image(image_input, self.logger)
         h, w = img.shape[:2]
 
-        faces, processing_time, cache_hit = self._detect_from_array(img)
+        faces, processing_time, cache_hit = self.detect_from_array(img)
         self._log_results(image_input, faces)
 
         return DetectionMetrics(
@@ -305,7 +311,7 @@ class FaceDetectorDNN:
             raise BlitzIDError(f"padding must be between 0.0 and 1.0, got {padding}")
 
         img = load_image(image_input, self.logger)
-        faces, _, _ = self._detect_from_array(img)
+        faces, _, _ = self.detect_from_array(img)
 
         return [
             (
@@ -329,7 +335,7 @@ class FaceDetectorDNN:
         img = load_image(image_input, self.logger)
 
         if faces is None:
-            detected, _, _ = self._detect_from_array(img)
+            detected, _, _ = self.detect_from_array(img)
             faces = [as_tuple(face) for face in detected]
 
         result = draw_detections(img, faces, show_confidence, color, thickness)
@@ -430,8 +436,8 @@ class FaceDetectorDNN:
                 h0 = int(max(1, min(round(bh / s), orig_h - y0)))
                 points = tuple(
                     (
-                        max(0, min(round(px / s), orig_w - 1)),
-                        max(0, min(round(py / s), orig_h - 1)),
+                        min(max(px / s, 0.0), float(orig_w - 1)),
+                        min(max(py / s, 0.0), float(orig_h - 1)),
                     )
                     for px, py in face.landmarks
                 )

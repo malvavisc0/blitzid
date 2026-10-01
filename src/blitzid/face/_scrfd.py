@@ -127,7 +127,10 @@ def map_detections_to_faces(
             continue
 
         points = tuple(
-            (max(0, min(int(px / scale), w - 1)), max(0, min(int(py / scale), h - 1)))
+            (
+                min(max(px / scale, 0.0), float(w - 1)),
+                min(max(py / scale, 0.0), float(h - 1)),
+            )
             for px, py in landmarks
         )
         faces.append(

@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from threading import Lock
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 
-from .._image import MIN_DIMENSION
+from .. import Face, FaceDetectorDNN, MRZReader, RapidOCRReader
+from .._image import crop_with_padding
 from ..exceptions import BlitzIDError, ModelError
-from ..face._face import Face
-from ..face.detector import FaceDetectorDNN
-from ..reading.mrz import MRZReader
-from ..reading.ocr import RapidOCRReader
-from ._upload import decode_image_bytes, encode_jpeg_b64
+from ._upload import decode_image_bytes, dims_within_bounds, encode_jpeg_b64
 
 FACE_CROP_PADDING = 0.2
 
@@ -49,8 +47,8 @@ def run_job(image: bytes, types: list[str], engines: Engines) -> dict[str, Any]:
         deduped, one section per requested type.
     """
     img = decode_image_bytes(image)
-    if img is None or min(img.shape[:2]) < MIN_DIMENSION:
-        return {"state": "failed", "error": "stored image bytes are undecodable"}
+    if img is None or not dims_within_bounds(img):
+        return {"state": "failed", "error": "stored image bytes failed validation"}
     sections: dict[str, Any] = {"state": "done"}
     for analysis_type in dict.fromkeys(types):
         sections[analysis_type] = _run_section(analysis_type, img, engines)
@@ -70,20 +68,9 @@ def _run_section(
     return body
 
 
-def _crop_face(img: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
-    """Crop a face region with relative padding, clipped to the image."""
-    height, width = img.shape[:2]
-    x, y, face_w, face_h = bbox
-    pad_w, pad_h = int(face_w * FACE_CROP_PADDING), int(face_h * FACE_CROP_PADDING)
-    x1, y1 = max(0, x - pad_w), max(0, y - pad_h)
-    x2 = min(width, x + face_w + pad_w)
-    y2 = min(height, y + face_h + pad_h)
-    return img[y1:y2, x1:x2]
-
-
 def _face_item(img: np.ndarray, face: Face) -> dict[str, Any]:
     """Build one face result item (bbox, confidence, landmarks, crop)."""
-    crop = _crop_face(img, face.bbox)
+    crop = crop_with_padding(img, face.bbox, FACE_CROP_PADDING)
     return {
         "bbox": list(face.bbox),
         "confidence": face.confidence,
@@ -131,8 +118,12 @@ def _run_mrz(img: np.ndarray, engines: Engines) -> dict[str, Any]:
     return {"record": asdict(record)}
 
 
-_SECTION_RUNNERS: dict[str, Callable[[np.ndarray, Engines], dict[str, Any]]] = {
-    "face": _run_face,
-    "ocr": _run_ocr,
-    "mrz": _run_mrz,
-}
+_SECTION_RUNNERS: Mapping[str, Callable[[np.ndarray, Engines], dict[str, Any]]] = (
+    MappingProxyType(
+        {
+            "face": _run_face,
+            "ocr": _run_ocr,
+            "mrz": _run_mrz,
+        }
+    )
+)

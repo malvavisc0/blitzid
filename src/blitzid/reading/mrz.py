@@ -12,10 +12,11 @@ failing field.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import combinations
+from types import MappingProxyType
 
 from .._image import ImageInput
 from ..exceptions import MRZError
@@ -26,7 +27,7 @@ __all__ = ["MRZReader", "MRZRecord"]
 _CHARSET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<")
 _LETTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 _WEIGHTS = (7, 3, 1)
-_LINE_COUNT = {30: 3, 36: 2, 44: 2}
+_LINE_COUNT: Mapping[int, int] = MappingProxyType({30: 3, 36: 2, 44: 2})
 
 
 @dataclass(frozen=True)

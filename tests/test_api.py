@@ -585,6 +585,11 @@ class TestSubmitValidation:
             response = _submit(client, data=big)
             assert response.status_code == 413
 
+    def test_oversized_dimensions_400(self) -> None:
+        huge = _image_bytes(np.zeros((10001, 32, 3), dtype=np.uint8))
+        with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
+            assert _submit(client, data=huge).status_code == 400
+
     def test_queue_full_503(self, monkeypatch: pytest.MonkeyPatch) -> None:
         store = MemoryJobStore(max_queued=1)
         with _env_client(
@@ -610,6 +615,16 @@ class TestSubmitValidation:
             assert response.status_code == 400
             response = _submit(client, types="ocr,mrz")
             assert response.status_code == 400
+
+    def test_mrz_engine_unavailable_400(self) -> None:
+        engines = Engines(
+            detector=None,
+            ocr_reader=_StubOCRReader([_ocr_text()]),
+            mrz_reader=None,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            assert _submit(client, types="mrz").status_code == 400
+            assert _submit(client, types="ocr").status_code == 202
 
 
 class TestHealth:

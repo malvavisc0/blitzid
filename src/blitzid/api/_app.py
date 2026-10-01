@@ -147,8 +147,8 @@ class _Workers:
         The claim lease is extended by a heartbeat thread while the
         analysis runs, so the sweeper only requeues jobs whose worker
         actually died. When the lease is lost mid-run (the job was
-        re-claimed by another worker), this worker cancels the
-        analysis and discards its result — the new owner's result
+        re-claimed by another worker), this worker finishes what it
+        is doing but discards the result — the new owner's result
         wins.
         """
         cancelled = threading.Event()
@@ -180,8 +180,10 @@ class _Workers:
     ) -> Iterator[None]:
         """Extend a job's claim lease on a background thread.
 
-        Sets *cancelled* when the claim lease is lost; the check after
-        the context exits raises :class:`_JobCancelled` in the worker.
+        Sets *cancelled* when the claim lease is lost (the running
+        analysis is not interrupted); the check after the context
+        exits raises :class:`_JobCancelled` so the worker discards
+        its result.
         """
         stop = threading.Event()
         heartbeat = threading.Thread(
@@ -204,8 +206,8 @@ class _Workers:
     ) -> None:
         """Renew a job's claim lease until told to stop.
 
-        A failed renewal (the claim was lost) cancels the running
-        analysis — the re-claimed worker owns the job now.
+        A failed renewal (the claim was lost) flags the result for
+        discard — the re-claimed worker owns the job now.
         """
         interval = max(1.0, self._config.lease_seconds / 3)
         while not stop.wait(interval):
@@ -230,12 +232,12 @@ class _Workers:
 
     def _sweep_once(self) -> None:
         try:
-            requeued = self._store.sweep()
+            recovered = self._store.sweep()
         except redis.RedisError as e:
             _LOG.error("lease sweep failed: %s", e)
         else:
-            if requeued:
-                _LOG.warning("lease sweep requeued %d abandoned job(s)", requeued)
+            if recovered:
+                _LOG.warning("lease sweep recovered %d abandoned job(s)", recovered)
 
 
 def create_app(
@@ -300,6 +302,8 @@ def _engine_missing(analysis_type: str, engines: Engines) -> bool:
     """Whether the engine for one analysis type is unavailable."""
     if analysis_type == "face":
         return engines.detector is None
+    if analysis_type == "mrz":
+        return engines.mrz_reader is None
     return engines.ocr_reader is None
 
 

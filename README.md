@@ -102,6 +102,19 @@ nationality), and parses TD1 (3x30), TD2 (2x36), and TD3 (2x44) into an
 convention (overflow at the start of `optional_data1`, no printed check
 digit).
 
+**Structured extraction.** `StructuredOCRReader` (same extra) feeds the
+OCR lines to an OpenAI-compatible chat endpoint (e.g. a local vLLM
+server) and returns a typed `StructuredOCR` record; fields the model
+cannot recover are omitted instead of hallucinated, date fields come
+back as `datetime.date`, text values are upper-cased by the reader, and
+the `document_type` is a closed vocabulary (`id`, `plate`, `mrz`,
+`unknown`). Endpoint via `BLITZID_LLM_BASE_URL` / `BLITZID_LLM_API_KEY`
+/ `BLITZID_LLM_MODEL`. Tracing is opt-in via the standard Langfuse SDK
+variables (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`, optionally
+`LANGFUSE_BASE_URL`): every LLM call is exported as an OpenTelemetry
+trace. Note the spans carry the OCR text (names, document numbers,
+dates) — point `LANGFUSE_BASE_URL` at an instance you control.
+
 **Document crop and QC.** `DocumentCropper` (classical CV, no model)
 finds the document quadrilateral, warps it flat at its own aspect, and
 quality-checks the crop: document found, aspect ratio near ID-1/ID-3,
@@ -310,6 +323,35 @@ from blitzid import MRZReader
 
 record = MRZReader().read("id_card.jpg")
 print(record.mrz_type, record.document_number, record.surname)
+```
+
+### `StructuredOCRReader`
+
+Defined in [`reading/structurize.py`](src/blitzid/reading/structurize.py);
+requires the `ocr` extra (`pip install blitzid[ocr]`). Reconstructs a
+typed record from OCR text lines via an LLM on an OpenAI-compatible
+endpoint (default a local vLLM server; configure with
+`BLITZID_LLM_BASE_URL`, `BLITZID_LLM_API_KEY`, `BLITZID_LLM_MODEL`).
+Unknown fields are left unset, never invented.
+
+| Method | Description |
+|---|---|
+| `read(texts, kind="auto")` | Returns a `StructuredOCR` from `OCRText` lines; `kind="id"/"plate"/"mrz"` picks a specialized prompt and stamps `document_type`, `"auto"` lets the model classify |
+
+**`StructuredOCR`** — pydantic model: `document_type` (`"id"` —
+identity document with person data, `"plate"` — license plate, `"mrz"`
+— machine readable zone, `"unknown"`, or None), `fields` (list of
+`ExtractedField`), `raw_text` (the joined OCR lines fed to the model).
+**`ExtractedField`** — pydantic model: `name` (snake_case label),
+`value` (`datetime.date` for date fields — ISO 8601 or `DD.MM.YYYY`
+input — upper-case text otherwise), `confidence` in `[0, 1]`.
+
+```python
+from blitzid import RapidOCRReader, StructuredOCRReader
+
+lines = RapidOCRReader().read("id_card.jpg")
+record = StructuredOCRReader().read(lines)
+print(record.document_type, [(f.name, f.value) for f in record.fields])
 ```
 
 ### `DocumentCropper`

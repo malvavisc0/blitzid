@@ -9,6 +9,9 @@ Public API
 - ``OCRText`` — recognized text line (bbox, text, confidence).
 - ``MRZReader`` — the ICAO 9303 machine-readable zone reader (``ocr`` extra).
 - ``MRZRecord`` — parsed MRZ fields.
+- ``StructuredOCRReader`` — LLM-backed structured output from OCR lines
+  (``ocr`` extra).
+- ``StructuredOCR``, ``ExtractedField`` — structured-output schemas.
 - ``DocumentCropper`` — document localization, perspective crop, and QC.
 - ``QualityReport`` — document crop quality-check verdict.
 - ``BlitzIDError``, ``ModelError``, ``ImageError``, ``MRZError`` — exception hierarchy.
@@ -20,6 +23,7 @@ from .face.detector import FaceDetectorDNN
 from .reading.document import DocumentCropper, QualityReport
 from .reading.mrz import MRZReader, MRZRecord
 from .reading.ocr import OCRText, RapidOCRReader
+from .reading.structurize import ExtractedField, StructuredOCR, StructuredOCRReader
 
 FaceDetectorError = BlitzIDError
 ModelDownloadError = ModelError
@@ -31,6 +35,7 @@ __all__ = [
     "BlitzIDError",
     "DetectionMetrics",
     "DocumentCropper",
+    "ExtractedField",
     "Face",
     "FaceDetectorDNN",
     "FaceDetectorError",
@@ -46,4 +51,6 @@ __all__ = [
     "OCRText",
     "QualityReport",
     "RapidOCRReader",
+    "StructuredOCR",
+    "StructuredOCRReader",
 ]

@@ -39,6 +39,20 @@ uv run python scripts/ocr_demo.py --image images/nl_td1_id_specimen.jpg
 uv run python scripts/ocr_demo.py --image images/td3_passport_specimen.jpg
 ```
 
+## `structurize_smoke.py` — structured-extraction smoke test (needs `ocr` extra)
+
+Calls the configured LLM endpoint (default a local vLLM server) on
+three document kinds — sample MRZ lines, a specimen ID image, and a
+specimen license-plate image — asserts the `document_type`
+classification (`mrz` / `id` / `plate`), and prints the extracted
+fields with confidences. This is the only place that makes endpoint
+calls — the pytest suite never hits the network. Configure the endpoint
+via `BLITZID_LLM_BASE_URL` / `BLITZID_LLM_API_KEY` / `BLITZID_LLM_MODEL`.
+
+```bash
+uv run python scripts/structurize_smoke.py
+```
+
 ## `benchmark.py` — pipeline timing
 
 Times engine init and warm per-call latency for the detection presets,

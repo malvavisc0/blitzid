@@ -35,6 +35,18 @@ TD3 = [
     "P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<",
     "L898902C36UTO7408122F1204159ZE184226B<<<<<10",
 ]
+# ICAO extended-number zones: the number is longer than its field, the
+# check position holds "<" (no printed check digit), and the overflow
+# sits at the start of the optional-data field.
+TD1_EXTENDED = [
+    "I<UTOD23145890<1234<<<<<<<<<<<",
+    "7408122F1204159UTO<<<<<<<<<<<5",
+    "ERIKSSON<<ANNA<MARIA<<<<<<<<<<",
+]
+TD3_EXTENDED = [
+    "P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<",
+    "L898902C3<UTO7408122F12041596D<<<<<<<<<<<<18",
+]
 
 
 def _texts(*lines: str) -> list[OCRText]:
@@ -254,6 +266,24 @@ class TestParse:
     def test_bad_document_number_check_digit(self) -> None:
         bad = [TD3[0], "L898902C30UTO7408122F1204159ZE184226B<<<<<10"]
         with pytest.raises(MRZError, match="TD3 document number"):
+            _parse(bad)
+
+    def test_extended_document_number_accepted(self) -> None:
+        """Numbers longer than the field print no check digit ('<')."""
+        record = _parse(TD1_EXTENDED)
+        assert record.document_number == "D23145890"
+        assert record.optional_data1.startswith("1234")
+
+    def test_extended_document_number_td3_accepted(self) -> None:
+        record = _parse(TD3_EXTENDED)
+        assert record.document_number == "L898902C3"
+        assert record.optional_data1.startswith("6D")
+
+    def test_extended_document_number_composite_still_gates(self) -> None:
+        """Corrupting the overflow must fail the composite check."""
+        line = TD1_EXTENDED[0]
+        bad = [line[:18] + "5" + line[19:], TD1_EXTENDED[1], TD1_EXTENDED[2]]
+        with pytest.raises(MRZError, match="TD1 composite"):
             _parse(bad)
 
     def test_bad_composite_check_digit(self) -> None:

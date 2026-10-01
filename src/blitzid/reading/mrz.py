@@ -6,7 +6,10 @@ and parses TD1 (3x30, ID cards), TD2 (2x36), and TD3 (2x44, passports)
 layouts into :class:`MRZRecord` fields. Runs on top of the ``ocr``
 extra's RapidOCRReader. No fuzzy OCR-error correction — a zone that
 does not validate raises :class:`~blitzid.exceptions.MRZError` with the
-failing field.
+failing field. One check digit is never required: ICAO fills the
+document-number check position with ``"<"`` for numbers longer than
+the field (overflow in the optional-data field); the composite check
+digit still covers the full number.
 """
 
 from __future__ import annotations
@@ -38,7 +41,9 @@ class MRZRecord:
         mrz_type: "TD1", "TD2", or "TD3".
         document_code: Two-character document code, e.g. "P<" or "I<".
         issuer: Three-character issuing state code.
-        document_number: Document number, fillers stripped.
+        document_number: Document number, fillers stripped. Numbers
+            longer than the field keep their overflow at the start of
+            ``optional_data1`` (ICAO extended-number convention).
         birth_date: Birth date as YYMMDD.
         sex: "M", "F", or "X" (MRZ "<" normalized).
         expiry_date: Expiry date as YYMMDD.
@@ -95,6 +100,21 @@ def _verify(label: str, text: str, expected: str) -> None:
         raise MRZError(
             f"{label} check digit mismatch: printed {expected!r}, computed {computed}"
         )
+
+
+def _verify_document_number(label: str, text: str, expected: str) -> None:
+    """Verify the printed document-number check digit.
+
+    ICAO 9303: a number longer than its field puts the overflow at the
+    start of the optional-data field and fills the check position with
+    ``"<"`` — no check digit is printed, so none is required. The
+    composite check digit still covers the full number.
+
+    Raises:
+        MRZError: If the printed digit does not match the computed one.
+    """
+    if expected != "<":
+        _verify(label, text, expected)
 
 
 def _verify_letters(label: str, code: str) -> None:
@@ -212,7 +232,7 @@ def _parse(lines: Sequence[str]) -> MRZRecord:
 
 def _parse_td1(l1: str, l2: str, l3: str) -> MRZRecord:
     """Parse a TD1 (3x30) machine-readable zone."""
-    _verify("TD1 document number", l1[5:14], l1[14])
+    _verify_document_number("TD1 document number", l1[5:14], l1[14])
     _verify("TD1 birth date", l2[0:6], l2[6])
     _verify("TD1 expiry date", l2[8:14], l2[14])
     _verify("TD1 composite", l1[5:30] + l2[0:7] + l2[8:15] + l2[18:29], l2[29])
@@ -240,7 +260,7 @@ def _parse_td1(l1: str, l2: str, l3: str) -> MRZRecord:
 
 def _parse_td2(l1: str, l2: str) -> MRZRecord:
     """Parse a TD2 (2x36) machine-readable zone."""
-    _verify("TD2 document number", l2[0:9], l2[9])
+    _verify_document_number("TD2 document number", l2[0:9], l2[9])
     _verify("TD2 birth date", l2[13:19], l2[19])
     _verify("TD2 expiry date", l2[21:27], l2[27])
     _verify("TD2 composite", l2[0:10] + l2[13:20] + l2[21:35], l2[35])
@@ -267,7 +287,7 @@ def _parse_td2(l1: str, l2: str) -> MRZRecord:
 
 def _parse_td3(l1: str, l2: str) -> MRZRecord:
     """Parse a TD3 (2x44) machine-readable zone."""
-    _verify("TD3 document number", l2[0:9], l2[9])
+    _verify_document_number("TD3 document number", l2[0:9], l2[9])
     _verify("TD3 birth date", l2[13:19], l2[19])
     _verify("TD3 expiry date", l2[21:27], l2[27])
     _verify("TD3 personal number", l2[28:42], l2[42])

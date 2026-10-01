@@ -52,6 +52,10 @@ All notable changes to this project will be documented in this file.
   code, issuer, nationality — the ones without check-digit protection),
   and parses TD1, TD2, and TD3 layouts. No fuzzy OCR-error correction:
   an unreadable zone raises `MRZError` with the failing field.
+  Document numbers longer than their field follow the ICAO
+  convention — no printed check digit, overflow at the start of
+  `optional_data1` — and are accepted (the composite check digit
+  still covers the full number).
 - `RapidOCRReader` / `OCRText` and the `blitzid[ocr]` extra: OCR text
   reading for ID documents via RapidOCR (PP-OCR ONNX models on
   onnxruntime CPU). Models download on first use to

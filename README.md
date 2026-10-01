@@ -5,16 +5,17 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Read identity documents from images: find faces, read printed text, and
-parse the machine-readable zone, in one typed Python library that runs on
-an ordinary CPU.
+Read identity documents from images: find and compare faces, read printed
+text, and parse the machine-readable zone, in one typed Python library
+that runs on an ordinary CPU.
 
 No GPU and no CUDA stack: inference runs on onnxruntime's CPU provider,
 face detection takes about 4 ms per image on a laptop, and the weights
-(SCRFD-2.5G for faces, PP-OCR for text, ~33 MB total) download on first
-use. Faces, ID photos, and document scans are biometric PII, so the
-pipeline never sends them anywhere. Everything runs in your process, and
-the optional HTTP API keeps uploads and results in RAM only.
+(SCRFD-2.5G for faces, ArcFace for face verification, PP-OCR for text)
+download on first use. Faces, ID photos, and document scans are
+biometric PII, so the pipeline never sends them anywhere. Everything
+runs in your process, and the optional HTTP API keeps uploads and
+results in RAM only.
 
 ## Why blitzid
 
@@ -63,7 +64,8 @@ faces = detector.detect_face("images/nl_td1_id_specimen.jpg")
 
 records = detector.detect_face_landmarks("images/nl_td1_id_specimen.jpg")
 # [Face(bbox=(49, 91, 84, 116), confidence=0.82,
-#       landmarks=((71, 138), (111, 138), (91, 164), (74, 179), (108, 180)))]
+#       landmarks=((71.4, 138.2), (111.8, 138.2), (91.2, 164.7),
+#                  (74.1, 179.9), (108.6, 180.2)))]
 ```
 
 Read the machine-readable zone of a document (`blitzid[ocr]`). Every
@@ -81,6 +83,21 @@ The face runs in single-digit milliseconds on CPU; the OCR pass behind
 the MRZ takes about a second. Full timings under
 [Performance](#performance).
 
+Compare two faces — the document portrait against a fresh selfie, for
+example (1:1 verification, same pipeline DeepFace-style tools use):
+
+```python
+from blitzid import FaceVerifier
+
+verifier = FaceVerifier(threshold=0.4)
+result = verifier.verify("id_portrait.jpg", "selfie.jpg")
+print(result.verified, f"{result.similarity:.3f}")
+# True 0.612
+
+embeddings = verifier.embed("id_portrait.jpg"), verifier.embed("selfie.jpg")
+FaceVerifier.similarity(*embeddings)  # cosine of the two vectors
+```
+
 ## What it does
 
 **Face detection.** SCRFD-2.5G (InsightFace `buffalo_m` ONNX weights)
@@ -90,6 +107,18 @@ and size filtering, an optional multi-scale pass for small faces, a
 content-hash LRU cache, batch processing, and bbox visualization.
 Presets: `create_fast_detector`, `create_accurate_detector`,
 `create_balanced_detector`.
+
+**Face verification.** `FaceVerifier` (1:1 comparison) embeds faces
+with ArcFace (InsightFace `buffalo_m` recognition weights) after
+aligning them to the canonical template by their five SCRFD landmarks,
+then compares the L2-normalized vectors by cosine similarity against a
+decision threshold (default 0.4; 0.35–0.5 is the sensible operating
+range, higher is stricter). `verify()` detects and uses the
+highest-confidence face of each image, `verify_faces()` reuses
+already-detected `Face` records, `embed()` returns a reusable vector,
+and `similarity()` is the cosine of two embeddings. Same photo, or
+re-encoded/rescaled copy? Verification of an image against itself
+scores ~1.0; different people land near 0.
 
 **Text reading.** `RapidOCRReader` (the `ocr` extra) returns text lines
 as `OCRText` records: bbox, text, confidence, sorted by confidence.
@@ -174,7 +203,7 @@ What a done result looks like on the specimen ID (abbreviated):
       {
         "bbox": [49, 91, 84, 116],
         "confidence": 0.82,
-        "landmarks": [[71, 138], [111, 138], [91, 164], [74, 179], [108, 180]],
+        "landmarks": [[71.4, 138.2], [111.8, 138.2], [91.2, 164.7], [74.1, 179.9], [108.6, 180.2]],
         "crop_base64": "/9j/4AAQSkZJRgABAQAAAQAB…"
       }
     ],
@@ -246,6 +275,7 @@ Defined in [`face/detector.py`](src/blitzid/face/detector.py). The primary SCRFD
 | `detect_face(image_input)` | Returns `list[(x, y, w, h, confidence)]` |
 | `detect_face_landmarks(image_input)` | Returns `list[Face]` with 5-point landmarks |
 | `detect_face_with_metrics(image_input)` | Returns a `DetectionMetrics` dataclass |
+| `detect_from_array(img)` | Detect from an already-loaded array; returns `(faces, processing_time, cache_hit)` |
 | `extract_faces(image_input, padding=0.2)` | Cropped face arrays with bounding boxes |
 | `visualize_detections(image_input, ...)` | Draw boxes on image; optionally save to disk |
 | `detect_faces_batch(image_paths)` | Process multiple images |
@@ -265,7 +295,7 @@ Frozen dataclass defined in [`face/_face.py`](src/blitzid/face/_face.py), return
 |---|---|---|
 | `bbox` | `(x, y, w, h)` | Bounding box in image pixels |
 | `confidence` | `float` | Detection score in `[0, 1]` |
-| `landmarks` | `tuple[(x, y), ...]` | Right eye, left eye, nose tip, right mouth corner, left mouth corner |
+| `landmarks` | `tuple[(x, y), ...]` | Right eye, left eye, nose tip, right mouth corner, left mouth corner; subpixel floats |
 
 ### `DetectionMetrics`
 
@@ -279,6 +309,43 @@ Dataclass defined in [`face/_face.py`](src/blitzid/face/_face.py).
 | `backend` | `str` | `"ONNXRuntime"` |
 | `num_faces` | `int` | Number of faces detected |
 | `cache_hit` | `bool` | Whether the result came from cache |
+
+### `FaceVerifier`
+
+Defined in [`face/verifier.py`](src/blitzid/face/verifier.py). 1:1 face
+verification: ArcFace embeddings (InsightFace `buffalo_m` recognition
+weights, CPU inference via onnxruntime) over landmark-aligned faces,
+compared by cosine similarity.
+
+| Method | Description |
+|---|---|
+| `verify(image_input1, image_input2)` | Detects the best face in each image; returns a `VerificationResult` |
+| `verify_faces(image_input1, face1, image_input2, face2)` | Verifies two already-detected `Face` records (no re-detection) |
+| `embed(image_input, face=None)` | L2-normalized 512-d ArcFace embedding; detects the best face when `face` is omitted |
+| `similarity(embedding1, embedding2)` | Cosine similarity of two embeddings (static) |
+
+The constructor takes a `threshold` (default `0.4`; verified when
+`similarity >= threshold`), an optional `detector` (a `FaceDetectorDNN`
+to reuse instead of the internal default), `model_dir`, and
+`allow_downloads`. When `model_dir` is omitted, the ArcFace weights are
+looked up in the supplied detector's models directory, else the default
+models dir. Raises `FaceVerificationError` when an image holds no
+detectable face.
+
+**`VerificationResult`** — frozen dataclass: `verified` (bool),
+`similarity` (cosine in `[-1, 1]`), `threshold`, `processing_time`
+(end-to-end seconds), `backend` (`"ONNXRuntime"`).
+
+```python
+from blitzid import FaceDetectorDNN, FaceVerifier
+
+detector = FaceDetectorDNN()
+verifier = FaceVerifier(detector=detector, threshold=0.4)
+
+faces = detector.detect_face_landmarks("id_card.jpg")
+selfie = detector.detect_face_landmarks("selfie.jpg")
+result = verifier.verify_faces("id_card.jpg", faces[0], "selfie.jpg", selfie[0])
+```
 
 ### `RapidOCRReader`
 
@@ -330,9 +397,12 @@ print(record.mrz_type, record.document_number, record.surname)
 Defined in [`reading/structurize.py`](src/blitzid/reading/structurize.py);
 requires the `ocr` extra (`pip install blitzid[ocr]`). Reconstructs a
 typed record from OCR text lines via an LLM on an OpenAI-compatible
-endpoint (default a local vLLM server; configure with
-`BLITZID_LLM_BASE_URL`, `BLITZID_LLM_API_KEY`, `BLITZID_LLM_MODEL`).
-Unknown fields are left unset, never invented.
+endpoint (`BLITZID_LLM_BASE_URL`, `BLITZID_LLM_API_KEY`, and
+`BLITZID_LLM_MODEL` environment variables or the matching constructor
+arguments — all required). The model is instructed to omit unknown
+fields rather than invent them (prompt-enforced; treat low-confidence
+fields as unreliable), and a `timeout` (default 180 s) bounds the
+endpoint call.
 
 | Method | Description |
 |---|---|
@@ -341,10 +411,14 @@ Unknown fields are left unset, never invented.
 **`StructuredOCR`** — pydantic model: `document_type` (`"id"` —
 identity document with person data, `"plate"` — license plate, `"mrz"`
 — machine readable zone, `"unknown"`, or None), `fields` (list of
-`ExtractedField`), `raw_text` (the joined OCR lines fed to the model).
+`ExtractedField`; one entry per name — duplicates collapse to the
+highest-confidence value), `raw_text` (the joined OCR lines fed to the
+model, stamped by the reader).
 **`ExtractedField`** — pydantic model: `name` (snake_case label),
-`value` (`datetime.date` for date fields — ISO 8601 or `DD.MM.YYYY`
-input — upper-case text otherwise), `confidence` in `[0, 1]`.
+`value` (`datetime.date` for date-named fields like `date_of_birth` /
+`birth_date` — ISO 8601 or `DD.MM.YYYY` input — upper-case text
+otherwise), `confidence` in `[0, 1]` (default `0.0` when the model
+omits it — treat such fields as unreliable).
 
 ```python
 from blitzid import RapidOCRReader, StructuredOCRReader
@@ -383,6 +457,7 @@ Defined in [`exceptions.py`](src/blitzid/exceptions.py).
 | `ModelError` | Model download or load failure |
 | `ImageError` | Image loading, validation, or processing failure |
 | `MRZError` | MRZ not found, malformed, or failed check-digit validation |
+| `FaceVerificationError` | Face verification failure (no detectable face, missing landmarks) |
 
 Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `ImageLoadError`, etc.) are re-exported from `__init__.py`.
 
@@ -391,6 +466,7 @@ Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `Imag
 ```mermaid
 graph TD
     A[blitzid] --> B[face/detector.py<br/>FaceDetectorDNN]
+    A --> N[face/verifier.py<br/>FaceVerifier]
     A --> I[reading/mrz.py<br/>MRZReader]
     A --> C[reading/ocr.py<br/>RapidOCRReader]
     A --> M[reading/document.py<br/>DocumentCropper · QualityReport]
@@ -401,6 +477,11 @@ graph TD
     B --> F[_image.py<br/>load_image · ImageInput]
     B --> G[face/_face.py<br/>Face · DetectionMetrics · cache]
     B --> H[face/_scrfd.py<br/>decode · letterbox]
+    N --> B
+    N --> E
+    N --> F
+    N --> G
+    N --> J[face/_arcface.py<br/>align · embed]
     C --> E
     C --> F
     M --> F
@@ -420,6 +501,13 @@ missing or unloadable model raises `ModelError`. Inference input size is
 configurable via `det_size` (default `640x640`, multiples of 32); images
 are letterboxed to preserve aspect ratio and boxes are mapped back to
 original image coordinates.
+
+`FaceVerifier` runs the **ArcFace** face recognizer (InsightFace
+`buffalo_m` recognition weights, ~174 MB, 512-d embeddings) through the
+same onnxruntime CPU profile: faces are aligned to the canonical
+112×112 ArcFace template by their five SCRFD landmarks, embedded, and
+compared by cosine similarity against the decision threshold. The same
+no-fallback rule applies.
 
 `RapidOCRReader` runs RapidOCR's **PP-OCR** ONNX models (detection,
 classification, recognition) through the same onnxruntime CPU profile.
@@ -441,6 +529,7 @@ median of 20 warm runs; init is the median of 5 constructions):
 | balanced | `detect_face` (specimen ID card) | 18 | 4 |
 | accurate | `detect_face` (specimen ID card) | 19 | 24 |
 | balanced | `detect_face_with_metrics` (cache hit) | — | 4 |
+| FaceVerifier | `verify` (specimen ID card, same image twice) | 210 | 240 |
 | RapidOCRReader | `read` (specimen ID card) | 725 | 1024 |
 | MRZReader | `read` (specimen ID card) | 1015 | 972 |
 
@@ -488,7 +577,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines and
 ## Credits
 
 - [InsightFace](https://github.com/deepinsight/insightface) for the
-  SCRFD-2.5G detector and the `buffalo_m` detection weights
+  SCRFD-2.5G detector and the `buffalo_m` detection and recognition
+  weights
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) for the PP-OCR text
   recognition pipeline
 - [ONNX Runtime](https://onnxruntime.ai) for CPU inference

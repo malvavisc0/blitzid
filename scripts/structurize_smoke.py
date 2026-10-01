@@ -1,11 +1,12 @@
 """StructuredOCRReader smoke test — calls the live OpenAI-compatible endpoint.
 
 Exercises the full pydantic-ai structured-extraction path against the
-configured LLM endpoint (default a local vLLM server) on three document
-kinds: hardcoded sample MRZ lines, a specimen ID image, and a specimen
-license-plate image. This is a smoke test: it makes network calls and
-asserts on the returned records, so it is run on demand, not as part of
-the pytest suite (which must never call the endpoint).
+configured LLM endpoint (`BLITZID_LLM_BASE_URL`, `BLITZID_LLM_API_KEY`,
+and `BLITZID_LLM_MODEL` must be set) on three document kinds: hardcoded
+sample MRZ lines, a specimen ID image, and a specimen license-plate
+image. This is a smoke test: it makes network calls and asserts on the
+returned records, so it is run on demand, not as part of the pytest
+suite (which must never call the endpoint).
 
 Run example::
 

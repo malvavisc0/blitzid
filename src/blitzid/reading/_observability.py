@@ -4,9 +4,10 @@ Strictly opt-in via the standard Langfuse SDK environment variables:
 ``LANGFUSE_PUBLIC_KEY`` / ``LANGFUSE_SECRET_KEY`` (and optionally
 ``LANGFUSE_BASE_URL``). Without them nothing is initialized and no
 spans leave the process. When set, the Langfuse client installs its
-span processor on a shared OpenTelemetry tracer provider
-(``service.name`` = "blitzid") and the pydantic-ai agent emits spans
-for every model call.
+span processor on the process's OpenTelemetry tracer provider —
+creating one (``service.name`` = "blitzid" via ``OTEL_SERVICE_NAME``)
+when none is installed, attaching to a host application's provider
+otherwise — and the pydantic-ai agent emits spans for every model call.
 
 Fail-soft: a missing ``langfuse`` install or a broken credential
 setup warns and disables tracing — observability can never take the
@@ -56,12 +57,8 @@ def langfuse_tracing() -> Langfuse | None:
         return None
     try:
         from langfuse import get_client
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.trace import set_tracer_provider
 
-        provider = TracerProvider(resource=Resource.create({"service.name": "blitzid"}))
-        set_tracer_provider(provider)
+        os.environ.setdefault("OTEL_SERVICE_NAME", "blitzid")
         client = get_client()
     except Exception as e:
         logger.warning("Langfuse tracing unavailable: %s", e)

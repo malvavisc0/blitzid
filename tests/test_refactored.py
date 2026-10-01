@@ -19,15 +19,9 @@ import numpy as np
 import pytest
 
 from blitzid import FaceDetectorDNN
+from blitzid._models import default_model_dir
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-try:
-    from platformdirs import user_cache_dir  # type: ignore[import-untyped]
-
-    EXPECTED_MODEL_DIR = (Path(user_cache_dir("blitzid")) / "models").resolve()
-except ImportError:
-    EXPECTED_MODEL_DIR = (Path.home() / ".cache" / "blitzid" / "models").resolve()
 
 SYNTHETIC_IMAGE = np.zeros((480, 640, 3), dtype=np.uint8)
 
@@ -64,10 +58,10 @@ def test_construction(detector: FaceDetectorDNN) -> None:
 
 
 def test_deterministic_model_dir(detector: FaceDetectorDNN) -> None:
-    """Default model_dir resolves to ``<repo_root>/models``."""
+    """A detector without model_dir uses the default models directory."""
     actual = detector.model_manager.model_dir.resolve()
-    assert actual == EXPECTED_MODEL_DIR, (
-        f"Expected model_dir={EXPECTED_MODEL_DIR}, got {actual}"
+    assert actual == default_model_dir().resolve(), (
+        f"Expected model_dir={default_model_dir()}, got {actual}"
     )
 
 

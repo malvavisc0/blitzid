@@ -9,7 +9,8 @@ quality-checked; thresholds are module constants.
 Quality checks, each ``"pass"`` / ``"warn"`` / ``"fail"`` / ``"n/a"``:
 
 - ``document_found`` — a plausible quad (convex, at least
-  :data:`MIN_DOCUMENT_AREA_FRACTION` of the image area) was found.
+  :data:`MIN_DOCUMENT_AREA_FRACTION` of the image area, its boundary
+  supported by image edges) was found.
 - ``aspect_ratio`` — crop w/h near ID-1 or ID-3 (tolerances
   :data:`ASPECT_PASS_TOLERANCE` / :data:`ASPECT_WARN_TOLERANCE`).
 - ``resolution`` — short side in pixels: >= 600 pass, >= 400 warn,
@@ -62,6 +63,10 @@ BRIGHTNESS_MIN = 60.0
 BRIGHTNESS_MAX = 200.0
 BRIGHTNESS_WARN_MARGIN = 20.0
 MIN_DOCUMENT_AREA_FRACTION = 0.08
+EDGE_SUPPORT_MIN_FRACTION = 0.5
+EDGE_SUPPORT_MAX_DIST_FRACTION = 0.02
+EDGE_SUPPORT_MIN_DIST_PX = 2.0
+EDGE_SUPPORT_SAMPLES = 32
 
 _SIDES = frozenset({"front", "back", "unknown"})
 _APPROX_EPSILONS = (0.02, 0.04, 0.08)
@@ -127,14 +132,52 @@ def _quad_area(quad: tuple[tuple[int, int], ...]) -> float:
     return abs(float(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))) / 2.0
 
 
+def _edge_support(dist: np.ndarray, quad: tuple[tuple[int, int], ...]) -> bool:
+    """Whether the quad boundary lies on image edges (edge support).
+
+    *dist* maps every pixel to its distance from the nearest edge.
+    Points sampled along the four quad sides count as supported when
+    they lie within :data:`EDGE_SUPPORT_MAX_DIST_FRACTION` of the
+    quad's average side length (at least
+    :data:`EDGE_SUPPORT_MIN_DIST_PX`) from an edge; at least
+    :data:`EDGE_SUPPORT_MIN_FRACTION` of the samples must be. A hull
+    approximated from a sprawling shape (e.g. a diamond over a plus,
+    whose sides cut across empty space) fails this; a photo's slightly
+    bowed card outline passes.
+    """
+    perimeter = sum(
+        np.hypot(
+            quad[index][0] - quad[(index + 1) % 4][0],
+            quad[index][1] - quad[(index + 1) % 4][1],
+        )
+        for index in range(4)
+    )
+    tolerance = max(
+        EDGE_SUPPORT_MIN_DIST_PX, EDGE_SUPPORT_MAX_DIST_FRACTION * perimeter / 4
+    )
+    height, width = dist.shape[:2]
+    hits = 0
+    for index in range(4):
+        x1, y1 = quad[index]
+        x2, y2 = quad[(index + 1) % 4]
+        for sample in range(EDGE_SUPPORT_SAMPLES):
+            x = round(x1 + (x2 - x1) * sample / (EDGE_SUPPORT_SAMPLES - 1))
+            y = round(y1 + (y2 - y1) * sample / (EDGE_SUPPORT_SAMPLES - 1))
+            if 0 <= x < width and 0 <= y < height and dist[y, x] <= tolerance:
+                hits += 1
+    return hits >= EDGE_SUPPORT_MIN_FRACTION * EDGE_SUPPORT_SAMPLES * 4
+
+
 def _detect_document_quad(img: np.ndarray) -> tuple[tuple[int, int], ...] | None:
     """Find the largest plausible document quad, or None.
 
-    Plausible: convex, and covering at least
-    :data:`MIN_DOCUMENT_AREA_FRACTION` of the image area.
+    Plausible: convex, covering at least
+    :data:`MIN_DOCUMENT_AREA_FRACTION` of the image area, and with
+    edge support along its boundary.
     """
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 50, 150)
+    dist = cv2.distanceTransform((edges == 0).astype(np.uint8), cv2.DIST_L2, 5)
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     min_area = MIN_DOCUMENT_AREA_FRACTION * float(img.shape[0] * img.shape[1])
@@ -145,7 +188,7 @@ def _detect_document_quad(img: np.ndarray) -> tuple[tuple[int, int], ...] | None
         if quad is None:
             continue
         area = _quad_area(quad)
-        if area > best_area:
+        if area > best_area and _edge_support(dist, quad):
             best, best_area = quad, area
     return best
 
@@ -153,8 +196,8 @@ def _detect_document_quad(img: np.ndarray) -> tuple[tuple[int, int], ...] | None
 def _warp_quad(img: np.ndarray, quad: tuple[tuple[int, int], ...]) -> np.ndarray:
     """Warp the quad into an axis-aligned crop at its own aspect."""
     tl, tr, br, bl = (np.asarray(point, dtype=np.float64) for point in quad)
-    width = int(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl)))
-    height = int(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr)))
+    width = max(1, int(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))))
+    height = max(1, int(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))))
     src = np.asarray(quad, dtype=np.float32)
     dst = np.array(
         [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],

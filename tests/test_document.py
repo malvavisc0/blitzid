@@ -59,6 +59,21 @@ class TestQuadDetection:
         assert report.checks["document_found"] == "fail"
         assert report.verdict == "reject"
 
+    def test_hull_over_plus_shape_rejected(self) -> None:
+        """A diamond hull over a plus sign has unsupported chords.
+
+        The quad approximated from the plus spans the arm tips, but
+        its sides cut across empty background — no edge support.
+        """
+        img = np.full((820, 1240, 3), 235, dtype=np.uint8)
+        cv2.rectangle(img, (520, 60), (720, 760), (20, 20, 20), -1)
+        cv2.rectangle(img, (120, 310), (1120, 510), (20, 20, 20), -1)
+        crop, report = DocumentCropper().crop(img)
+        assert crop is None
+        assert report.quad is None
+        assert report.checks["document_found"] == "fail"
+        assert report.verdict == "reject"
+
     @pytest.mark.parametrize("rotation", [8.0, -8.0])
     def test_rotation_recovered_by_warp(
         self, synthetic_document: Callable[..., np.ndarray], rotation: float

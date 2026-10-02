@@ -26,6 +26,7 @@ from numpy.typing import NDArray
 
 from blitzid._image import ImageInput, load_image
 from blitzid._models import ModelManager, default_model_dir
+from blitzid.face._face import Face
 from blitzid.face.detector import FaceDetectorDNN
 
 __all__ = ["AntiSpoofReader", "AntiSpoofResult"]
@@ -163,6 +164,20 @@ class AntiSpoofReader:
         """
         img = load_image(image_input, self.logger)
         faces, _, _ = self.detector.detect_from_array(img)
+        return self.read_faces(img, faces)
+
+    def read_faces(
+        self, img: NDArray[np.uint8], faces: list[Face]
+    ) -> list[AntiSpoofResult]:
+        """Score already-detected faces of a loaded image.
+
+        Skips detection, so callers that ran the detector once reuse
+        its result.
+
+        Args:
+            img: BGR image array the faces were detected in.
+            faces: Detected faces of that image.
+        """
         return [self._score(img, face.bbox, face.confidence) for face in faces]
 
     def _score(

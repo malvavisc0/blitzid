@@ -438,7 +438,23 @@ class MRZReader:
             ModelError: If the OCR engine returns a partial result.
             MRZError: If no MRZ is found or a check digit fails.
         """
-        lines = self.reader.read(image_input)
+        return self.parse(self.reader.read(image_input))
+
+    def parse(self, lines: list[OCRText]) -> MRZRecord:
+        """Parse the MRZ from already-read OCR text lines.
+
+        Lets callers that ran :class:`RapidOCRReader` once reuse its
+        output instead of running the OCR pass a second time.
+
+        Args:
+            lines: Text lines as returned by :meth:`RapidOCRReader.read`.
+
+        Returns:
+            The parsed :class:`MRZRecord`.
+
+        Raises:
+            MRZError: If no MRZ is found or a check digit fails.
+        """
         record = _read_mrz(lines)
         self.logger.info("MRZ read: %s", record.mrz_type)
         return record

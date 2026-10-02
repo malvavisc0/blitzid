@@ -1,7 +1,9 @@
 """Analysis dispatch for /analyze jobs: decode, run, build sections.
 
 Sections of one job share a small memo, so detection, OCR, and the LLM
-each run at most once per image no matter how many types are requested.
+each run at most once per image no matter how many types are requested:
+``attributes`` and ``antispoof`` classify the ``face`` section's
+detections, and ``mrz`` parses the ``ocr`` section's text lines.
 """
 
 from __future__ import annotations
@@ -35,11 +37,16 @@ FACE_CROP_PADDING = 0.2
 class Engines:
     """Shared analysis engine singletons with one lock per engine.
 
-    The locks serialize access to engines that are not thread-safe:
-    the cache-less detector, the RapidOCR pipeline shared by the OCR,
-    MRZ, and structured sections, and the LLM reader. Fields are None
-    when an engine is unavailable (missing ``ocr`` extra, missing
-    weights, missing LLM configuration).
+    The locks serialize access to the engines that are not thread-safe:
+    ``detector_lock`` guards the one SCRFD ``FaceDetectorDNN`` instance
+    (every detection, including those behind the attribute, anti-spoof,
+    verification, and document-crop paths), ``ocr_lock`` the RapidOCR
+    pipeline (its one text pass per job feeds the OCR, MRZ, and
+    structured sections), and ``structured_lock`` the LLM reader. The
+    FairFace, MiniFASNet, and ArcFace passes are plain onnxruntime
+    sessions, which are thread-safe, so they run outside any lock.
+    Fields are None when an engine is unavailable (missing ``ocr``
+    extra, missing weights, missing LLM configuration).
     """
 
     detector: FaceDetectorDNN | None
@@ -145,8 +152,7 @@ def _read_attributes(
         )
 
     def _load() -> list[FaceAttributes]:
-        with engines.detector_lock:
-            return reader.read(img)
+        return reader.read_faces(img, _read_faces(img, engines, memo))
 
     return _memoized(memo, "attributes", _load)
 
@@ -162,21 +168,19 @@ def _read_antispoof(
         )
 
     def _load() -> list[AntiSpoofResult]:
-        with engines.detector_lock:
-            return reader.read(img)
+        return reader.read_faces(img, _read_faces(img, engines, memo))
 
     return _memoized(memo, "antispoof", _load)
 
 
 def _read_mrz(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> MRZRecord:
-    """Parse the MRZ (shares the OCR engine)."""
+    """Parse the MRZ from the shared OCR text lines."""
     reader = engines.mrz_reader
     if reader is None:
         raise ModelError("mrz analysis requires the blitzid[ocr] extra")
 
     def _load() -> MRZRecord:
-        with engines.ocr_lock:
-            return reader.read(img)
+        return reader.parse(_read_texts(img, engines, memo))
 
     return _memoized(memo, "mrz", _load)
 

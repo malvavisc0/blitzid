@@ -6,6 +6,7 @@ weights (downloaded on first use) and the SCRFD detector.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 from blitzid import AntiSpoofReader, AntiSpoofResult
@@ -43,3 +44,10 @@ class TestReader:
         reader = AntiSpoofReader()
         blank = np.full((200, 200, 3), 255, dtype=np.uint8)
         assert reader.read(blank) == []
+
+    def test_read_faces_matches_read_for_the_same_detections(self) -> None:
+        reader = AntiSpoofReader()
+        img = cv2.imread("images/bub_der_personalausweis_kopie.jpg")
+        faces = reader.detector.detect_face_landmarks(img)
+        assert reader.read_faces(img, faces) == reader.read(img)
+        assert reader.read_faces(img, []) == []

@@ -191,8 +191,10 @@ class _StubDetector:
 
     def __init__(self, faces: list[Any] | Exception) -> None:
         self._faces = faces
+        self.calls = 0
 
     def detect_face_landmarks(self, image_input: Any) -> list[Any]:
+        self.calls += 1
         if isinstance(self._faces, Exception):
             raise self._faces
         return self._faces
@@ -219,7 +221,7 @@ class _StubMRZReader:
         self._record = record
         self.calls = 0
 
-    def read(self, image_input: Any) -> MRZRecord:
+    def parse(self, lines: Any) -> MRZRecord:
         self.calls += 1
         if isinstance(self._record, Exception):
             raise self._record
@@ -233,7 +235,7 @@ class _StubAttributeReader:
         self._attributes = attributes
         self.calls = 0
 
-    def read(self, image_input: Any) -> list[Any]:
+    def read_faces(self, img: Any, faces: Any) -> list[Any]:
         self.calls += 1
         if isinstance(self._attributes, Exception):
             raise self._attributes
@@ -247,7 +249,7 @@ class _StubAntiSpoofReader:
         self._scores = scores
         self.calls = 0
 
-    def read(self, image_input: Any) -> list[Any]:
+    def read_faces(self, img: Any, faces: Any) -> list[Any]:
         self.calls += 1
         if isinstance(self._scores, Exception):
             raise self._scores
@@ -1194,9 +1196,12 @@ class TestConsistencyJob:
     def test_sections_share_per_job_work(self) -> None:
         engines = _stub_engines(structured=_consistent_record())
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            response = _submit(client, types="antispoof,mrz,structured,consistency")
+            response = _submit(
+                client, types="face,attributes,antispoof,ocr,mrz,structured,consistency"
+            )
             body = _poll_done(client, response.json()["job_id"])
         assert body["status"] == "done"
+        assert engines.detector.calls == 1
         assert engines.ocr_reader.calls == 1
         assert engines.mrz_reader.calls == 1
         assert engines.structured_reader.calls == 1

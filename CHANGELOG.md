@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- The dev stack (`docker-compose.dev.yml`) now ships a local llama.cpp
+  `llm` service (CPU) serving the LiquidAI LFM 2.5 2.6B Q4_0 GGUF,
+  downloaded once into `./models/llm` and reused. The API's structured
+  extraction defaults to it (`http://llm:17847/v1`, model
+  `lfm2.5-2.6b-q4_0`) instead of a remote endpoint; the playground /
+  web UI is at `http://localhost:17847`.
+- `MRZReader.parse(lines)` parses already-read OCR text lines, and
+  `FaceAttributeReader.read_faces(img, faces)` /
+  `AntiSpoofReader.read_faces(img, faces)` classify already-detected
+  faces, so callers that ran the OCR pass or the detector once reuse
+  the result instead of repeating the inference.
+
+### Changed
+
+- `/analyze` jobs now really run each model once per image: the `mrz`
+  section parses the `ocr` section's text lines (previously a second
+  full RapidOCR pass, ~1 s), and `attributes` / `antispoof` classify
+  the `face` section's detections (previously a second and third SCRFD
+  pass). Outputs are unchanged.
+- Every in-house onnxruntime session (SCRFD, ArcFace, FairFace,
+  MiniFASNet) is created with `session.intra_op.allow_spinning=0`
+  (`blitzid._models.session_options()`): thread pools no longer
+  busy-wait between kernels, which matters when several sessions share
+  one process. Measured detect + embed: ~260 ms to ~180 ms, bit-identical
+  outputs.
+- SCRFD input blobs are built with `cv2.dnn.blobFromImage` (one pass
+  instead of a NumPy swap/transpose/normalize chain; bit-identical).
+- `create_fast_detector` infers at 480x480 instead of 640x640 (about
+  40% less inference time on document images; the default,
+  `balanced`, and `accurate` detectors stay at 640x640).
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

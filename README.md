@@ -366,7 +366,7 @@ Defined in [`face/detector.py`](src/blitzid/face/detector.py). The primary SCRFD
 
 **Factory presets** (classmethods):
 
-- `create_fast_detector()` — high confidence threshold, caching enabled
+- `create_fast_detector()` — high confidence threshold, 480x480 inference, caching enabled
 - `create_accurate_detector()` — low threshold, small min face size
 - `create_balanced_detector()` — middle ground with caching
 
@@ -476,6 +476,7 @@ use, pinned like the rest).
 | Method | Description |
 |---|---|
 | `read(image_input)` | Returns `list[AntiSpoofResult]`, one per detected face |
+| `read_faces(img, faces)` | Scores already-detected `Face` records of a loaded BGR array (no re-detection) |
 
 **`AntiSpoofResult`** — frozen dataclass: `bbox`, `confidence`, and
 the three model scores `live_score`, `paper_score`, `screen_score`.
@@ -493,6 +494,7 @@ FairFace model (weights download on first use, pinned like the rest).
 | Method | Description |
 |---|---|
 | `read(image_input)` | Returns `list[FaceAttributes]`, one per detected face |
+| `read_faces(img, faces)` | Predicts for already-detected `Face` records of a loaded BGR array (no re-detection) |
 
 **`FaceAttributes`** — frozen dataclass: `bbox`, `confidence` (the
 detector's score), `age` (one of
@@ -514,6 +516,7 @@ and a zone that fails raises `MRZError`.
 | Method | Description |
 |---|---|
 | `read(image_input)` | Returns an `MRZRecord` |
+| `parse(lines)` | Parses an `MRZRecord` from already-read `OCRText` lines (no second OCR pass) |
 
 **`MRZRecord`** — frozen dataclass: `mrz_type`, `document_code`,
 `issuer`, `document_number`, `birth_date` (YYMMDD), `sex` (`M`/`F`/`X`),
@@ -660,19 +663,23 @@ median of 20 warm runs; init is the median of 5 constructions):
 
 | Pipeline | Benchmark | Init (ms) | Median (ms) |
 |---|---|---|---|
-| fast | `detect_face` (specimen ID card) | 19 | 4 |
-| balanced | `detect_face` (specimen ID card) | 18 | 4 |
-| accurate | `detect_face` (specimen ID card) | 19 | 24 |
-| balanced | `detect_face_with_metrics` (cache hit) | — | 4 |
-| FaceVerifier | `verify` (specimen ID card, same image twice) | 210 | 240 |
-| RapidOCRReader | `read` (specimen ID card) | 725 | 1024 |
-| MRZReader | `read` (specimen ID card) | 1015 | 972 |
+| fast | `detect_face` (specimen ID card) | 14 | 4 |
+| balanced | `detect_face` (specimen ID card) | 15 | 4 |
+| accurate | `detect_face` (specimen ID card) | 14 | 28 |
+| balanced | `detect_face_with_metrics` (cache hit) | — | 5 |
+| FaceVerifier | `verify` (specimen ID card, same image twice) | 200 | 173 |
+| RapidOCRReader | `read` (specimen ID card) | 798 | 903 |
+| MRZReader | `read` (specimen ID card) | 913 | 910 |
 
 The benchmark reports the CPU model automatically, so results files in
 `results/` carry the same context. Re-run locally with
 `uv run python scripts/benchmark.py --markdown`; the `ocr` benchmarks
 are skipped without the `ocr` extra. Numbers vary by machine: treat
-them as ballpark figures, not guarantees.
+them as ballpark figures, not guarantees. Inside one process the
+onnxruntime sessions are created without intra-op spin-waiting
+(`session.intra_op.allow_spinning=0`), so engines that run back to
+back (detector, then recognizer) do not fight each other for cores;
+outputs are bit-identical to the default session profile.
 
 ## Demo
 

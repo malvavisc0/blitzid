@@ -12,12 +12,15 @@ import pytest
 from blitzid.exceptions import BlitzIDError, ModelError
 from blitzid.face._face import Face, LRUCache, compute_hash, draw_detections
 from blitzid.face._scrfd import (
+    SCRFD_INPUT_MEAN,
+    SCRFD_INPUT_STD,
     anchor_centers,
     decode_outputs,
     distance2bbox,
     distance2kps,
     letterbox_image,
     map_detections_to_faces,
+    to_blob,
     validate_architecture,
 )
 from blitzid.face.detector import (
@@ -228,6 +231,28 @@ class TestLetterboxImage:
         img = np.zeros((640, 640, 3), dtype=np.uint8)
         _, scale = letterbox_image(img, (640, 640))
         assert scale == 1.0
+
+
+class TestToBlob:
+    def test_matches_reference_normalization_exactly(self) -> None:
+        rng = np.random.default_rng(0)
+        img = rng.integers(0, 256, (64, 96, 3), dtype=np.uint8)
+        reference = (
+            img[..., ::-1].transpose(2, 0, 1)[np.newaxis].astype(np.float32)
+            - SCRFD_INPUT_MEAN
+        ) / SCRFD_INPUT_STD
+        blob = to_blob(img)
+        assert blob.shape == (1, 3, 64, 96)
+        assert blob.dtype == np.float32
+        assert blob.flags["C_CONTIGUOUS"]
+        assert np.array_equal(blob, reference)
+
+    def test_swaps_bgr_to_rgb(self) -> None:
+        img = np.zeros((8, 8, 3), dtype=np.uint8)
+        img[..., 0] = 255  # blue channel only
+        blob = to_blob(img)
+        assert blob[0, 2].max() > 0.99
+        assert blob[0, 0].max() < 0
 
 
 class TestDistance2BoxAndKps:

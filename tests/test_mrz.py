@@ -383,3 +383,36 @@ class TestMissingExtra:
         monkeypatch.setitem(sys.modules, "rapidocr", None)
         with pytest.raises(BlitzIDError, match=r"blitzid\[ocr\]"):
             MRZReader()
+
+
+class _FakeOCRReader:
+    """RapidOCRReader stand-in: fixed lines, counts the OCR passes."""
+
+    def __init__(self, texts: list[OCRText]) -> None:
+        self._texts = texts
+        self.calls = 0
+
+    def read(self, image_input: object) -> list[OCRText]:
+        self.calls += 1
+        return self._texts
+
+
+class TestMRZReaderParse:
+    def test_parse_reuses_ocr_lines_without_an_ocr_pass(self) -> None:
+        ocr = _FakeOCRReader(_texts(*TD3))
+        reader = MRZReader(reader=ocr)  # type: ignore[arg-type]
+        record = reader.parse(ocr.read("doc.jpg"))
+        assert ocr.calls == 1
+        assert record.mrz_type == "TD3"
+        assert record.document_number == "L898902C3"
+
+    def test_read_is_ocr_then_parse(self) -> None:
+        ocr = _FakeOCRReader(_texts(*TD1))
+        reader = MRZReader(reader=ocr)  # type: ignore[arg-type]
+        assert reader.read("doc.jpg") == reader.parse(ocr.read("doc.jpg"))
+        assert ocr.calls == 2
+
+    def test_parse_raises_without_mrz(self) -> None:
+        reader = MRZReader(reader=_FakeOCRReader([]))  # type: ignore[arg-type]
+        with pytest.raises(MRZError, match="no MRZ found"):
+            reader.parse([])

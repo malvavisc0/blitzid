@@ -140,12 +140,14 @@ class TestFactoryPresets:
         assert det.confidence_threshold == 0.7
         assert det.min_face_size == (80, 80)
         assert det.nms_threshold == 0.4
+        assert det.det_size == (480, 480)
 
     def test_create_accurate(self) -> None:
         det = FaceDetectorDNN.create_accurate_detector()
         assert det.confidence_threshold == 0.3
         assert det.min_face_size == (20, 20)
         assert det.nms_threshold == 0.2
+        assert det.det_size == (640, 640)
 
     def test_create_balanced(self) -> None:
         det = FaceDetectorDNN.create_balanced_detector()

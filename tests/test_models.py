@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from blitzid._models import ModelManager, default_model_dir
+from blitzid._models import ModelManager, default_model_dir, session_options
 from blitzid.exceptions import ModelError
 from blitzid.face._arcface import (
     ARCFACE_MODEL_FILENAME,
@@ -115,8 +115,21 @@ class TestModelManager:
             session = mgr.load_session()
 
         assert session is mock_session
-        mock_ort.assert_called_once_with(
-            str(mgr.model_path), providers=["CPUExecutionProvider"]
+        (path,), kwargs = mock_ort.call_args
+        assert path == str(mgr.model_path)
+        assert kwargs["providers"] == ["CPUExecutionProvider"]
+        options = kwargs["sess_options"]
+        assert options.get_session_config_entry("session.intra_op.allow_spinning") == (
+            "0"
+        )
+
+    def test_session_options_disable_spinning_only(self) -> None:
+        """Thread counts stay at onnxruntime's defaults; only spinning is off."""
+        options = session_options()
+        assert options.intra_op_num_threads == 0
+        assert options.inter_op_num_threads == 0
+        assert options.get_session_config_entry("session.intra_op.allow_spinning") == (
+            "0"
         )
 
     def test_load_session_failure_raises(self, tmp_path: Path) -> None:

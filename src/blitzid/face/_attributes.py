@@ -25,6 +25,7 @@ from numpy.typing import NDArray
 from blitzid._image import ImageInput, load_image
 from blitzid._models import ModelManager, default_model_dir
 from blitzid.exceptions import ModelError
+from blitzid.face._face import Face
 from blitzid.face.detector import FaceDetectorDNN
 
 __all__ = ["AGE_GROUPS", "GENDERS", "RACES", "FaceAttributeReader", "FaceAttributes"]
@@ -204,6 +205,20 @@ class FaceAttributeReader:
         """
         img = load_image(image_input, self.logger)
         faces, _, _ = self.detector.detect_from_array(img)
+        return self.read_faces(img, faces)
+
+    def read_faces(
+        self, img: NDArray[np.uint8], faces: list[Face]
+    ) -> list[FaceAttributes]:
+        """Predict attributes for already-detected faces of a loaded image.
+
+        Skips detection, so callers that ran the detector once reuse
+        its result.
+
+        Args:
+            img: BGR image array the faces were detected in.
+            faces: Detected faces of that image.
+        """
         return [self._predict(img, face.bbox, face.confidence) for face in faces]
 
     def _predict(

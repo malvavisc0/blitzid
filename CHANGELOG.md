@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-02
+
+### Added
+
+- Challenge-response liveness (`/liveness/challenge` +
+  `/liveness/session`): one random action per signup (`turn_head`,
+  `smile`, `move_closer`), verified from SCRFD landmarks across three
+  frames (`verify_action`, `MotionEvidence`), with one-use short-lived
+  challenges. A printed or screen photo cannot perform the action.
+- Passive face anti-spoofing (`antispoof` analysis type):
+  `AntiSpoofReader` / `AntiSpoofResult` (MiniFASNetV2 weights with a
+  pinned digest), scoring each face as live, printed photo, or screen
+  photo.
+
 ## [0.1.1] - 2026-10-01
 
 ### Added

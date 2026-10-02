@@ -173,6 +173,23 @@ class TestParse:
         with pytest.raises(MRZError, match="TD1 nationality"):
             _parse(bad)
 
+    def test_letters_fields_undo_digit_confusions(self) -> None:
+        """A digit in a letters-only slot can only be its paired letter."""
+        garbled = [TD3[0].replace("UTO", "UT0", 1), TD3[1].replace("UTO", "UT0", 1)]
+        record = _parse(garbled)
+        assert record.issuer == "UTO"
+        assert record.nationality == "UTO"
+
+    def test_date_fields_undo_letter_confusions(self) -> None:
+        garbled = [TD3[0], TD3[1].replace("740812", "74O812", 1)]
+        assert _parse(garbled).birth_date == "740812"
+
+    def test_unguessable_garble_still_raises(self) -> None:
+        """A changed digit is not a confusion and must fail the checks."""
+        bad = [TD3[0], TD3[1].replace("740812", "740819", 1)]
+        with pytest.raises(MRZError, match="birth date"):
+            _parse(bad)
+
     def test_impossible_birth_date_rejected(self) -> None:
         """991239 (month 99, day 12) has valid check digits but no date."""
         l1 = TD1[0]
@@ -296,14 +313,22 @@ class TestParse:
         with pytest.raises(MRZError, match="sex"):
             _parse(bad)
 
-    def test_ocr_digit_in_issuer_raises(self) -> None:
-        """O→0 confusion in a field without a check digit must fail loudly."""
-        bad = ["P<UT0ERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<", TD3[1]]
+    def test_ocr_digit_in_issuer_fixed(self) -> None:
+        """O→0 in a letters-only slot is unambiguous and gets mapped back."""
+        record = _parse(["P<UT0ERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<", TD3[1]])
+        assert record.issuer == "UTO"
+
+    def test_unmapped_digit_in_issuer_raises(self) -> None:
+        bad = ["P<UT3ERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<", TD3[1]]
         with pytest.raises(MRZError, match="TD3 issuer"):
             _parse(bad)
 
-    def test_ocr_digit_in_document_code_raises(self) -> None:
-        bad = [TD1[0].replace("I<", "1<"), TD1[1], TD1[2]]
+    def test_ocr_digit_in_document_code_fixed(self) -> None:
+        record = _parse([TD1[0].replace("I<", "1<"), TD1[1], TD1[2]])
+        assert record.document_code == "I<"
+
+    def test_unmapped_digit_in_document_code_raises(self) -> None:
+        bad = [TD1[0].replace("I<", "3<"), TD1[1], TD1[2]]
         with pytest.raises(MRZError, match="TD1 document code"):
             _parse(bad)
 

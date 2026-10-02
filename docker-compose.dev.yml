@@ -13,11 +13,17 @@
 #   attributes      — always on (FairFace weights are baked in)
 #   antispoof       — always on (MiniFASNet weights are baked in)
 #   ocr / mrz       — always on (weights are baked into the image)
-#   structured      — needs BLITZID_LLM_BASE_URL, BLITZID_LLM_API_KEY
-#                     and BLITZID_LLM_MODEL: your OpenAI-compatible
-#                     chat endpoint (vLLM, router.requesty.ai, ...)
+#   structured      — the bundled local llama.cpp server (service `llm`)
+#                     by default; override with BLITZID_LLM_BASE_URL /
+#                     BLITZID_LLM_API_KEY / BLITZID_LLM_MODEL (vLLM,
+#                     router.requesty.ai, ...). Unset those in .env to
+#                     use the local model.
 #   consistency     — same config as structured
 #   tracing         — needs the LANGFUSE_* trio (spans carry OCR text)
+# The `llm` service runs llama.cpp (CPU) serving LiquidAI
+# LFM2.5-2.6B-Q4_0.gguf, downloaded from Hugging Face on first start
+# into ./models/llm (persistent; gitignored). Playground / web UI at
+# http://localhost:17847, OpenAI-compatible endpoint at /v1.
 # The API's own OpenAPI docs need no config and are always on:
 # http://localhost:8000/docs (schema at /openapi.json).
 services:
@@ -33,11 +39,11 @@ services:
       BLITZID_API_REDIS_URL: redis://redis:6379/0
       BLITZID_MODELS_DIR: /models
       # OpenAI-compatible chat endpoint for structured extraction and
-      # the consistency cross-check. Empty leaves those engines off and
-      # /health says so.
-      BLITZID_LLM_BASE_URL: ${BLITZID_LLM_BASE_URL:-}
-      BLITZID_LLM_API_KEY: ${BLITZID_LLM_API_KEY:-}
-      BLITZID_LLM_MODEL: ${BLITZID_LLM_MODEL:-}
+      # the consistency cross-check. Defaults to the bundled local
+      # llama.cpp server (service `llm`); anything set in .env wins.
+      BLITZID_LLM_BASE_URL: ${BLITZID_LLM_BASE_URL:-http://llm:8080/v1}
+      BLITZID_LLM_API_KEY: ${BLITZID_LLM_API_KEY:-local}
+      BLITZID_LLM_MODEL: ${BLITZID_LLM_MODEL:-lfm2.5-2.6b-q4_0}
       # Langfuse tracing of the LLM calls (off while unset).
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
@@ -54,11 +60,14 @@ services:
       # Hot code: the project is installed editable, so edits under
       # ./src are picked up without rebuilding the image.
       - ./src:/app/src
-      # Optional: share one weight cache with the host instead of the
-      # baked /models (first start then downloads ~200 MB):
-      # - ./models:/models
+      # Share one weight cache with the host instead of the baked
+      # /models. A fresh ./models holds no weights, so the first start
+      # downloads ~260 MB before /health answers (start_period covers it).
+      - ./models:/models
     depends_on:
       redis:
+        condition: service_healthy
+      llm:
         condition: service_healthy
     healthcheck:
       test:
@@ -70,8 +79,44 @@ services:
         ]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 180s
       retries: 3
+  llm:
+    # llama.cpp server, CPU build, serving the LiquidAI LFM 2.5 2.6B Q4_0
+    # GGUF. The model is downloaded from Hugging Face on first start into
+    # the ./models/llm bind mount and reused on later starts (no
+    # re-download once the file exists).
+    image: ghcr.io/ggml-org/llama.cpp:server
+    ports:
+      # Uncommon host port to avoid clashes with the usual 8080 users;
+      # the container keeps the image default so its baked healthcheck
+      # (curl on 8080) stays valid.
+      - "17847:8080"
+    environment:
+      # -m target inside the mounted /llm-models dir; llama.cpp downloads
+      # the HF file there when it is missing, then loads it from there.
+      LLAMA_ARG_MODEL: /llm-models/LFM2.5-2.6B-Q4_0.gguf
+      LLAMA_ARG_HF_REPO: LiquidAI/LFM2.5-2.6B-GGUF
+      LLAMA_ARG_HF_FILE: LFM2.5-2.6B-Q4_0.gguf
+      # CPU-only: the server image has no CUDA build, 0 is explicit.
+      LLAMA_ARG_N_GPU_LAYERS: "0"
+      LLAMA_ARG_CTX_SIZE: "8192"
+      # Stable name served via /v1/models and expected by BLITZID_LLM_MODEL.
+      LLAMA_ARG_ALIAS: lfm2.5-2.6b-q4_0
+      # The image already sets LLAMA_ARG_HOST=0.0.0.0 and port 8080.
+    volumes:
+      # Persistent model cache (gitignored); mounted apart from the api
+      # service's /models so the two never share one directory.
+      - ./models/llm:/llm-models
+    restart: unless-stopped
+    healthcheck:
+      # Same probe the image bakes in; redeclared only to give the first
+      # start (download + load) a generous start_period.
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 30
   redis:
     image: redis:8-alpine
     # Persistence off: jobs live in RAM only — nothing ever reaches disk.

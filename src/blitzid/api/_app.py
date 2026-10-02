@@ -18,6 +18,7 @@ the engine weights and ``BLITZID_LLM_*`` for the structured engine.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import threading
@@ -141,8 +142,9 @@ def _build_engines() -> Engines:
         _LOG.warning("ocr/mrz engines unavailable: %s", e)
     structured_reader = None
     try:
+        importlib.import_module("pydantic_ai")
         structured_reader = StructuredOCRReader(log_level=logging.WARNING)
-    except BlitzIDError as e:
+    except (ImportError, BlitzIDError) as e:
         _LOG.warning("structured engine unavailable: %s", e)
     return Engines(
         detector=detector,

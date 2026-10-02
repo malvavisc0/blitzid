@@ -192,7 +192,8 @@ class FaceVerifier:
             raise FaceVerificationError(
                 f"Embedding shape mismatch: {embedding1.shape} vs {embedding2.shape}"
             )
-        return float(np.dot(embedding1, embedding2))
+        score = float(np.dot(embedding1, embedding2))
+        return max(-1.0, min(1.0, score))
 
     def _embed_face(
         self,

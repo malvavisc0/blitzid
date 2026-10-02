@@ -31,7 +31,6 @@ Requires the ``ocr`` extra (``pip install blitzid[ocr]``).
 
 from __future__ import annotations
 
-import importlib
 import logging
 import os
 from collections.abc import Mapping, Sequence
@@ -168,23 +167,6 @@ def _is_date_field(name: str) -> bool:
     )
 
 
-def _require_ocr_extra() -> None:
-    """Import the ``ocr`` extra's pydantic-ai now, or raise.
-
-    Fail-fast counterpart to the lazy import in agent construction.
-
-    Raises:
-        BlitzIDError: If the ``ocr`` extra (pydantic-ai) is not installed.
-    """
-    try:
-        importlib.import_module("pydantic_ai")
-    except ImportError as e:
-        raise BlitzIDError(
-            f"Cannot import pydantic-ai (ocr extra): {e}. "
-            "Install it: pip install blitzid[ocr]"
-        ) from e
-
-
 class ExtractedField(BaseModel):
     """One named field recovered from OCR text.
 
@@ -297,8 +279,7 @@ class StructuredOCRReader:
         BlitzIDError: If a required setting is neither passed nor set
             in the environment (``base_url`` / ``BLITZID_LLM_BASE_URL``,
             ``api_key`` / ``BLITZID_LLM_API_KEY``, ``model_name`` /
-            ``BLITZID_LLM_MODEL``), if ``timeout`` is not positive, or
-            if the ``ocr`` extra (pydantic-ai) is not installed.
+            ``BLITZID_LLM_MODEL``) or if ``timeout`` is not positive.
         ModelError: If the endpoint cannot be reached or returns
             unstructured output.
     """
@@ -318,7 +299,6 @@ class StructuredOCRReader:
             raise BlitzIDError(f"timeout must be positive, got {timeout}")
         self.timeout = timeout
 
-        _require_ocr_extra()
         self.base_url = self._require_config(base_url, LLM_BASE_URL_ENV, "base_url")
         self.api_key = self._require_config(api_key, LLM_API_KEY_ENV, "api_key")
         self.model_name = self._require_config(model_name, LLM_MODEL_ENV, "model_name")

@@ -272,13 +272,6 @@ class TestConfiguration:
 
 
 class TestMissingExtra:
-    def test_construction_raises_without_pydantic_ai(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setitem(sys.modules, "pydantic_ai", None)
-        with pytest.raises(BlitzIDError, match=r"blitzid\[ocr\]"):
-            StructuredOCRReader(log_level=logging.WARNING)
-
     def test_create_agent_raises_without_pydantic_ai(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

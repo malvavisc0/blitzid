@@ -1,6 +1,6 @@
 [project]
 name = "blitzid"
-version = "0.1.0"
+version = "0.1.1"
 description = "Modular DNN-based ID document reading framework (face detection, OCR, MRZ) optimized for CPU deployment"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -33,12 +33,19 @@ dependencies = [
     "onnxruntime",
     "opencv-python-headless>=5",
     "platformdirs",
+    # Structured-output models (ExtractedField, StructuredOCR) are
+    # exported from the package root, so pydantic is a core dependency.
+    "pydantic",
 ]
 
 # ── Optional dependency groups ─────────────────────────────
 [project.optional-dependencies]
 ocr = [
     "rapidocr",
+    # LLM-backed structured extraction from OCR output.
+    "pydantic-ai",
+    # Optional: Langfuse tracing of the LLM calls (env-gated).
+    "langfuse",
 ]
 api = [
     "fastapi",
@@ -116,7 +123,19 @@ strict = true
 
 [[tool.mypy.overrides]]
 # Optional user-installed dependencies, lazy-imported inside guarded
-# methods (PIL in _image.py, rapidocr in ocr.py): absent in core-only
-# installs, so there is nothing to type-check against there.
-module = ["PIL", "PIL.*", "rapidocr", "rapidocr.*"]
+# methods (PIL in _image.py, rapidocr in ocr.py, pydantic-ai in
+# structurize.py, langfuse + opentelemetry in _observability.py):
+# absent in core-only installs, so there is nothing to type-check
+# against there.
+module = [
+    "PIL",
+    "PIL.*",
+    "rapidocr",
+    "rapidocr.*",
+    "pydantic_ai",
+    "pydantic_ai.*",
+    "langfuse",
+    "langfuse.*",
+    "opentelemetry.*",
+]
 ignore_missing_imports = true

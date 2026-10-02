@@ -4,6 +4,72 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-01
+
+### Added
+
+- 1:1 face verification: `FaceVerifier` aligns detected faces to the
+  canonical ArcFace template via their five SCRFD landmarks, embeds
+  them with the ArcFace recognizer (InsightFace `buffalo_m` recognition
+  weights, ~174 MB, 512-d, downloaded on first use into the models dir
+  — `BLITZID_MODELS_DIR` when set), and compares the L2-normalized
+  vectors by cosine similarity against a decision threshold (default
+  `0.4`). API: `verify(image1, image2)` (best face per image),
+  `verify_faces(image1, face1, image2, face2)` (reuses detections),
+  `embed(image, face=None)`, and static `similarity(e1, e2)`; exports
+  `FaceVerifier`, `VerificationResult`, and `FaceVerificationError`
+  from the package root. The ArcFace weights load from `model_dir`,
+  defaulting to a supplied detector's models directory, else the
+  default models dir (`FaceVerifier.model_manager` mirrors the
+  detector's). `ModelManager` gained `filename`/`url`/
+  `sha256` constructor overrides (SCRFD defaults unchanged) and now
+  verifies downloads against a pinned digest (SCRFD and ArcFace both);
+  `FaceDetectorDNN` / `FaceVerifier` expose `allow_downloads`;
+  `scripts/download_models.py` pre-fetches the recognition weights too.
+  Smoke test: `scripts/verify_smoke.py` (specimen ID portrait, rescaled
+  copy, and two distinct faces from the conference fixture).
+- Face attributes (`age`, `gender`, `race` per face):
+  `FaceAttributeReader` / `FaceAttributes` (FairFace weights with a
+  pinned digest) and an `attributes` analysis type in the HTTP API.
+- Document self-consistency: the `consistency` analysis type
+  cross-checks the printed fields against the machine-readable zone
+  (`cross_check`, `ConsistencyReport`, `FieldComparison`) and the
+  portrait's age band and gender against the birth date and sex
+  (`PhotoComparison`), with per-field verdicts and both values.
+- LLM-backed structured extraction (`ocr` extra): `StructuredOCRReader`
+  rebuilds a typed record from OCR text lines via an OpenAI-compatible
+  chat endpoint (pydantic-ai; endpoint via `BLITZID_LLM_BASE_URL` /
+  `BLITZID_LLM_API_KEY` / `BLITZID_LLM_MODEL` or the matching
+  constructor arguments — all required, no baked-in defaults). Exports `StructuredOCRReader`, `StructuredOCR`,
+  and `ExtractedField` from the package root; `pydantic` becomes a core
+  dependency for the exported schemas. `document_type` is a closed
+  vocabulary (`id`, `plate`, `mrz`, `unknown`); date-named fields come
+  back as `datetime.date`; the reader stamps `raw_text` from the actual
+  prompt, upper-cases text values itself, and collapses duplicate field
+  names to the highest-confidence entry. The endpoint call is bounded
+  by `timeout` (default 180 s). `read(texts, kind=...)` selects a
+  specialized per-kind prompt (`id` / `plate` / `mrz`, stamping
+  `document_type`) or `kind="auto"` for model classification. Optional
+  Langfuse tracing of the LLM calls (`langfuse` in the `ocr` extra),
+  opt-in via the standard `LANGFUSE_PUBLIC_KEY` /
+  `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` environment variables.
+  Smoke test: `scripts/structurize_smoke.py` (MRZ lines, specimen ID
+  image, specimen license-plate image).
+
+### Changed
+
+- The MRZ reader resolves obvious OCR confusions (0/O, 1/I, 2/Z,
+  5/S, 6/G, 8/B) per field alphabet before check-digit validation
+  instead of rejecting them; unresolvable input still raises
+  `MRZError`. Structured extraction builds its agent per call (a
+  reused agent's HTTP client broke on later calls from other threads),
+  and one job's sections share detection, OCR, and LLM work.
+- `Face.landmarks` now carry subpixel float coordinates (previously
+  truncated to integers), so ArcFace alignment uses the detector's full
+  keypoint precision. `FaceDetectorDNN.detect_from_array` is public
+  (was the private `_detect_from_array`); `ModelError` messages for a
+  missing model now name the full path looked up.
+
 ## [0.1.0] - 2026-10-01
 
 ### Added

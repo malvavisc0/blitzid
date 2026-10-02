@@ -7,11 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - The dev stack (`docker-compose.dev.yml`) now ships a local llama.cpp
-  `llm` service (CPU) serving the LiquidAI LFM 2.5 2.6B Q4_0 GGUF,
-  downloaded once into `./models/llm` and reused. The API's structured
-  extraction defaults to it (`http://llm:17847/v1`, model
-  `lfm2.5-2.6b-q4_0`) instead of a remote endpoint; the playground /
-  web UI is at `http://localhost:17847`.
+  `llm` service serving Qwythos-9B-v2 (MTP Q5_K_M) in non-thinking
+  greedy mode, downloaded once into `./models/llm` and reused; a CUDA
+  override (`docker-compose.gpu.yml`) swaps to the GPU build. The API's
+  structured extraction defaults to it (internal `http://llm:8080/v1`,
+  model `qwythos-9b-v2`); a remote endpoint is a `.env` change away.
 - `MRZReader.parse(lines)` parses already-read OCR text lines, and
   `FaceAttributeReader.read_faces(img, faces)` /
   `AntiSpoofReader.read_faces(img, faces)` classify already-detected
@@ -20,6 +20,17 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The `structured` / `consistency` jobs no longer feed machine-readable
+  code-strip lines (lines of `A-Z`/`0-9`/`<`) to the LLM: the code strip
+  is parsed deterministically by the `mrz` section, and including it in
+  the visual-zone prompt made small models glue code-strip values into
+  printed fields (e.g. `document_number` coming back as
+  `SPECI20142999999990`).
+- The `auto` extraction prompt now classifies by text shape (an MRZ is
+  only `A-Z`/`0-9`/`<` lines with no words; text with labels such as
+  "Name"/"Surname"/"Personalausweis" is an `id`), so small local
+  models stop mistaking visual-zone ID OCR for a machine-readable
+  zone.
 - `/analyze` jobs now really run each model once per image: the `mrz`
   section parses the `ocr` section's text lines (previously a second
   full RapidOCR pass, ~1 s), and `attributes` / `antispoof` classify

@@ -46,7 +46,7 @@ import fakeredis
 import redis
 from fastapi.testclient import TestClient
 
-from blitzid.api._analyze import Engines
+from blitzid.api._analyze import Engines, _printed_texts
 from blitzid.api._app import ApiConfig, _Workers, create_app
 from blitzid.api._jobs import (
     CLAIM_PREFIX,
@@ -963,6 +963,37 @@ class TestCrop:
             response = self._crop(client, synthetic_document(), side="front")
             assert response.status_code == 200
             assert detector.observed == [True]
+
+
+class TestPrintedTexts:
+    """The visual-zone filter must drop code-strip lines, keep everything else."""
+
+    def _line(self, text: str) -> OCRText:
+        return OCRText(bbox=(0, 0, 10, 10), text=text, confidence=0.9)
+
+    def test_drops_mrz_lines(self) -> None:
+        lines = [
+            self._line("I<NLDSPECI20142999999990<<<<<8"),
+            self._line("6503101F2403096NLD<<<<<<<<<<<8"),
+            self._line("DE<BRUIJN<<WILLEKE<LISELOTTE<<"),
+        ]
+        assert _printed_texts(lines) == []
+
+    def test_keeps_visual_zone_lines(self) -> None:
+        lines = [
+            self._line("SPECI2014"),
+            self._line("999999990"),
+            self._line("De Bruijn"),
+            self._line("10 MAA/MAR 1965"),
+            self._line("IDENTITY CARD"),
+        ]
+        assert _printed_texts(lines) == lines
+
+    def test_keeps_short_alnum_runs(self) -> None:
+        # 9 chars of digits is a printed field, not a 30-char code strip.
+        assert [t.text for t in _printed_texts([self._line("999999990")])] == [
+            "999999990"
+        ]
 
 
 class TestStructuredJob:

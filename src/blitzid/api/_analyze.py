@@ -8,6 +8,7 @@ detections, and ``mrz`` parses the ``ocr`` section's text lines.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -31,6 +32,11 @@ from blitzid.reading.ocr import OCRText, RapidOCRReader
 from blitzid.reading.structurize import StructuredOCR, StructuredOCRReader
 
 FACE_CROP_PADDING = 0.2
+
+# A machine-readable code-strip line: 15+ characters of only A-Z, 0-9
+# and '<' with no spaces (TD1 3x30, TD2 2x36, TD3 2x44). Visual-zone
+# lines carry words, separators, or shorter values, so they never match.
+_MRZ_LINE = re.compile(r"[A-Za-z0-9<]{15,}")
 
 
 @dataclass
@@ -197,11 +203,22 @@ def _read_structured(
         )
 
     def _load() -> StructuredOCR:
-        texts = _read_texts(img, engines, memo)
+        texts = _printed_texts(_read_texts(img, engines, memo))
         with engines.structured_lock:
             return reader.read(texts)
 
     return _memoized(memo, "structured", _load)
+
+
+def _printed_texts(texts: list[OCRText]) -> list[OCRText]:
+    """Keep the visual zone's lines, dropping machine-readable code-strip lines.
+
+    The code strip (lines of A-Z, 0-9 and '<') is parsed deterministically
+    by the ``mrz`` reader; fed to the visual-zone LLM extraction it makes
+    the model glue code-strip values into printed fields (e.g. appending
+    the MRZ's personal number to ``document_number``).
+    """
+    return [text for text in texts if not _MRZ_LINE.fullmatch(text.text)]
 
 
 def _run_face(

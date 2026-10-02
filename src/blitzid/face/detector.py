@@ -15,10 +15,10 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .._image import ImageInput, crop_with_padding, load_image
-from .._models import ModelManager, default_model_dir
-from ..exceptions import BlitzIDError
-from ._face import (
+from blitzid._image import ImageInput, crop_with_padding, load_image
+from blitzid._models import ModelManager, default_model_dir
+from blitzid.exceptions import BlitzIDError
+from blitzid.face._face import (
     DetectionMetrics,
     Face,
     LRUCache,
@@ -26,7 +26,7 @@ from ._face import (
     compute_hash,
     draw_detections,
 )
-from ._scrfd import (
+from blitzid.face._scrfd import (
     SCRFD_STRIDES,
     anchor_centers,
     decode_outputs,

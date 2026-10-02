@@ -16,10 +16,10 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from .._image import ImageInput, load_image
-from .._models import ModelManager, default_model_dir
-from ..exceptions import BlitzIDError, FaceVerificationError
-from ._arcface import (
+from blitzid._image import ImageInput, load_image
+from blitzid._models import ModelManager, default_model_dir
+from blitzid.exceptions import BlitzIDError, FaceVerificationError
+from blitzid.face._arcface import (
     ARCFACE_MODEL_FILENAME,
     ARCFACE_MODEL_SHA256,
     ARCFACE_MODEL_URL,
@@ -29,8 +29,8 @@ from ._arcface import (
     to_blob,
     validate_architecture,
 )
-from ._face import Face, VerificationResult
-from .detector import FaceDetectorDNN
+from blitzid.face._face import Face, VerificationResult
+from blitzid.face.detector import FaceDetectorDNN
 
 __all__ = ["FaceVerifier", "VerificationResult"]
 

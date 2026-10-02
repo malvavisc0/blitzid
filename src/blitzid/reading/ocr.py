@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._image import ImageInput, load_image
-from .._models import default_model_dir
-from ..exceptions import BlitzIDError, ModelError
+from blitzid._image import ImageInput, load_image
+from blitzid._models import default_model_dir
+from blitzid.exceptions import BlitzIDError, ModelError
 
 if TYPE_CHECKING:
     from rapidocr import RapidOCR

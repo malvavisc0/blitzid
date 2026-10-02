@@ -35,7 +35,7 @@ from typing import Any, cast
 
 import redis
 
-from ..exceptions import BlitzIDError
+from blitzid.exceptions import BlitzIDError
 
 QUEUE_KEY = "blitzid:queue"
 PROCESSING_KEY = "blitzid:processing"

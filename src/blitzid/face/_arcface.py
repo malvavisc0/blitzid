@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from ..exceptions import ModelError
+from blitzid.exceptions import ModelError
 
 ARCFACE_MODEL_URL = (
     "https://huggingface.co/immich-app/buffalo_m/resolve/main/recognition/model.onnx"

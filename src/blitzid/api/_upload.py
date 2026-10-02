@@ -18,8 +18,8 @@ import cv2
 import numpy as np
 from fastapi import HTTPException
 
-from .._image import MAX_DIMENSION, MIN_DIMENSION
-from ..exceptions import ImageError
+from blitzid._image import MAX_DIMENSION, MIN_DIMENSION
+from blitzid.exceptions import ImageError
 
 ACCEPTED_IMAGE_FORMATS = "jpg/png/webp/bmp/tiff"
 PDF_MAGIC = b"%PDF-"

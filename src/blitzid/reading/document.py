@@ -41,11 +41,11 @@ from typing import TYPE_CHECKING, Literal
 import cv2
 import numpy as np
 
-from .._image import ImageInput, load_image
-from ..exceptions import BlitzIDError
+from blitzid._image import ImageInput, load_image
+from blitzid.exceptions import BlitzIDError
 
 if TYPE_CHECKING:
-    from ..face.detector import FaceDetectorDNN
+    from blitzid.face.detector import FaceDetectorDNN
 
 __all__ = ["DocumentCropper", "QualityReport"]
 

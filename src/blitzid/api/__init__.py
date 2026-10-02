@@ -6,6 +6,6 @@ as ``blitzid.api:app``. Requires the ``api`` extra
 (``pip install blitzid[api]``).
 """
 
-from ._app import app
+from blitzid.api._app import app
 
 __all__ = ["app"]

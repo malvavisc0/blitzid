@@ -8,8 +8,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from ..exceptions import ModelError
-from ._face import Face
+from blitzid.exceptions import ModelError
+from blitzid.face._face import Face
 
 SCRFD_STRIDES: tuple[int, ...] = (8, 16, 32)
 SCRFD_NUM_ANCHORS = 2

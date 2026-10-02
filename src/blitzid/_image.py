@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, TypeGuard, Union
 import cv2
 import numpy as np
 
-from .exceptions import ImageError
+from blitzid.exceptions import ImageError
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImageType

@@ -21,7 +21,7 @@ from pathlib import Path
 import onnxruntime as ort  # type: ignore[import-untyped]
 from platformdirs import user_cache_dir
 
-from .exceptions import ModelError
+from blitzid.exceptions import ModelError
 
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 

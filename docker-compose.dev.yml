@@ -8,7 +8,7 @@
 # through the environment block below. All names read from .env
 # (compose interpolation and env_file both pick it up).
 #
-# Feature checklist (curl http://localhost:8000/health):
+# Feature checklist (curl http://localhost:17800/health):
 #   face / verify   — always on (weights are baked into the image)
 #   attributes      — always on (FairFace weights are baked in)
 #   antispoof       — always on (MiniFASNet weights are baked in)
@@ -20,18 +20,29 @@
 #                     use the local model.
 #   consistency     — same config as structured
 #   tracing         — needs the LANGFUSE_* trio (spans carry OCR text)
-# The `llm` service runs llama.cpp (CPU) serving LiquidAI
-# LFM2.5-2.6B-Q4_0.gguf, downloaded from Hugging Face on first start
-# into ./models/llm (persistent; gitignored). Playground / web UI at
-# http://localhost:17847, OpenAI-compatible endpoint at /v1.
+# The `llm` service runs llama.cpp serving Qwythos-9B-v2 (MTP Q5_K_M),
+# non-thinking mode with greedy sampling, downloaded from Hugging Face
+# on first start into ./models/llm (persistent; gitignored). Playground /
+# web UI at http://localhost:17847, OpenAI-compatible endpoint at /v1.
+# CPU by default; for CUDA add the GPU override file:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.gpu.yml up
+# To use a remote endpoint instead of the local service, point the
+# BLITZID_LLM_* vars in .env elsewhere and skip the local llama with
+# `docker compose ... up --no-deps api redis` (or stop the llm service;
+# the running api keeps serving).
 # The API's own OpenAPI docs need no config and are always on:
-# http://localhost:8000/docs (schema at /openapi.json).
+# http://localhost:17800/docs (schema at /openapi.json).
 services:
   api:
     build: .
     image: blitzid:dev
+    container_name: blitzid-api
+    hostname: blitzid
     ports:
-      - "8000:8000"
+      # Uncommon host port: 8000 is taken by unrelated local stacks
+      # (e.g. the `morphik` container). The container keeps 8000 so the
+      # baked healthcheck and the deploy compose stay unchanged.
+      - "17800:8000"
     env_file:
       - path: .env
         required: false
@@ -43,7 +54,7 @@ services:
       # llama.cpp server (service `llm`); anything set in .env wins.
       BLITZID_LLM_BASE_URL: ${BLITZID_LLM_BASE_URL:-http://llm:8080/v1}
       BLITZID_LLM_API_KEY: ${BLITZID_LLM_API_KEY:-local}
-      BLITZID_LLM_MODEL: ${BLITZID_LLM_MODEL:-lfm2.5-2.6b-q4_0}
+      BLITZID_LLM_MODEL: ${BLITZID_LLM_MODEL:-qwythos-9b-v2}
       # Langfuse tracing of the LLM calls (off while unset).
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
@@ -60,6 +71,13 @@ services:
       # Hot code: the project is installed editable, so edits under
       # ./src are picked up without rebuilding the image.
       - ./src:/app/src
+      # Smoke-test fixtures and scripts (api_smoke / structurize_smoke /
+      # verify_smoke) run inside the api container against the local llm
+      # service and the baked weights:
+      #   docker compose -f docker-compose.dev.yml exec api \
+      #     python scripts/api_smoke.py
+      - ./images:/app/images
+      - ./scripts:/app/scripts
       # Share one weight cache with the host instead of the baked
       # /models. A fresh ./models holds no weights, so the first start
       # downloads ~260 MB before /health answers (start_period covers it).
@@ -82,32 +100,58 @@ services:
       start_period: 180s
       retries: 3
   llm:
-    # llama.cpp server, CPU build, serving the LiquidAI LFM 2.5 2.6B Q4_0
-    # GGUF. The model is downloaded from Hugging Face on first start into
-    # the ./models/llm bind mount and reused on later starts (no
-    # re-download once the file exists).
+    # llama.cpp server serving the Qwythos-9B-v2 MTP Q5_K_M GGUF (CPU
+    # image; the GPU override swaps to the CUDA build). The model is
+    # downloaded from Hugging Face on first start into the ./models/llm
+    # bind mount and reused on later starts (no re-download once the
+    # file exists).
     image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: blitzid-llm
+    hostname: llm
     ports:
       # Uncommon host port to avoid clashes with the usual 8080 users;
       # the container keeps the image default so its baked healthcheck
       # (curl on 8080) stays valid.
       - "17847:8080"
     environment:
-      # -m target inside the mounted /llm-models dir; llama.cpp downloads
-      # the HF file there when it is missing, then loads it from there.
-      LLAMA_ARG_MODEL: /llm-models/LFM2.5-2.6B-Q4_0.gguf
-      LLAMA_ARG_HF_REPO: LiquidAI/LFM2.5-2.6B-GGUF
-      LLAMA_ARG_HF_FILE: LFM2.5-2.6B-Q4_0.gguf
-      # CPU-only: the server image has no CUDA build, 0 is explicit.
+      # Qwythos-9B-v2, MTP Q5_K_M. Qwen3.5-based reasoning model run in
+      # non-thinking mode (REASONING=off) so it answers directly; greedy
+      # (temp 0) is explicitly safe per the card and is the only setting
+      # that keeps every strict smoke assert green (Granite 4.2-8B in
+      # greedy non-thinking mode regressed 4 fields, so it was dropped).
+      # MTP speculative decoding uses the native multi-token head.
+      # --hf-repo/--hf-file resolve the model from the persistent HF
+      # cache mounted at /root/.cache/huggingface (no -m needed).
+      LLAMA_ARG_HF_REPO: empero-ai/Qwythos-9B-v2-GGUF
+      LLAMA_ARG_HF_FILE: Qwythos-9B-v2-MTP-Q5_K_M.gguf
+      # Skip the model's vision projector (text-only extraction path).
+      LLAMA_ARG_MMPROJ_AUTO: "0"
+      # CPU-only: the server image has no CUDA build, 0 is explicit
+      # (the GPU override sets it to 99).
       LLAMA_ARG_N_GPU_LAYERS: "0"
-      LLAMA_ARG_CTX_SIZE: "8192"
+      LLAMA_ARG_CTX_SIZE: "16384"
+      # Deterministic extraction sampling (greedy); top_p/top_k kept per
+      # the card but inert under temp 0.
+      LLAMA_ARG_TEMPERATURE: "0"
+      LLAMA_ARG_TOP_P: "0.95"
+      LLAMA_ARG_TOP_K: "20"
+      LLAMA_ARG_N_PREDICT: "2048"
+      # MTP speculative decoding, per the card: draft 6 tokens per step.
+      LLAMA_ARG_SPEC_TYPE: draft-mtp
+      LLAMA_ARG_SPEC_DRAFT_N_MAX: "6"
+      # Qwythos is a reasoning model: `auto` spends the whole budget on
+      # a thinking trace and returns empty content. Extraction needs the
+      # answer, not the chain of thought.
+      LLAMA_ARG_REASONING: "off"
+      LLAMA_ARG_THREADS: "16"
       # Stable name served via /v1/models and expected by BLITZID_LLM_MODEL.
-      LLAMA_ARG_ALIAS: lfm2.5-2.6b-q4_0
+      LLAMA_ARG_ALIAS: qwythos-9b-v2
       # The image already sets LLAMA_ARG_HOST=0.0.0.0 and port 8080.
     volumes:
-      # Persistent model cache (gitignored); mounted apart from the api
-      # service's /models so the two never share one directory.
-      - ./models/llm:/llm-models
+      # The HF model cache (blobs + snapshots) persists in ./models/llm;
+      # --hf-repo/--hf-file resolve from it, so a recreate never
+      # re-downloads the model. Gitignored.
+      - ./models/llm:/root/.cache/huggingface
     restart: unless-stopped
     healthcheck:
       # Same probe the image bakes in; redeclared only to give the first
@@ -119,6 +163,8 @@ services:
       retries: 30
   redis:
     image: redis:8-alpine
+    container_name: blitzid-redis
+    hostname: redis
     # Persistence off: jobs live in RAM only — nothing ever reaches disk.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     restart: unless-stopped

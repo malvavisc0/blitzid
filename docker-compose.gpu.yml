@@ -1,0 +1,28 @@
+# GPU override for the dev stack: run the local llama.cpp service on
+# CUDA instead of CPU.
+#
+#   docker compose -f docker-compose.dev.yml -f docker-compose.gpu.yml \
+#     up --build
+#
+# Only the `llm` service is overridden (image -> CUDA build, all layers
+# offloaded, nvidia device reservation); everything else — ports,
+# volumes, healthcheck, sampling knobs, and the api's wiring to
+# http://llm:8080/v1 — is inherited from docker-compose.dev.yml.
+#
+# Requires the NVIDIA container toolkit on the host (nvidia-smi works
+# inside containers) and a GPU driver matching the CUDA build.
+services:
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: blitzid-llm
+    hostname: llm
+    environment:
+      # Offload every layer to VRAM; the CPU image set this to 0.
+      LLAMA_ARG_N_GPU_LAYERS: "99"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

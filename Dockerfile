@@ -20,6 +20,9 @@ COPY --from=builder /app /app
 COPY --from=builder /models /models
 ENV BLITZID_MODELS_DIR=/models
 ENV PATH=/app/.venv/bin:$PATH
+# Scripts reference fixtures via relative "images/" paths, and the
+# smoke tests run from the repo root.
+WORKDIR /app
 RUN useradd --create-home appuser
 USER appuser
 EXPOSE 8000

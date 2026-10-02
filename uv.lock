@@ -245,6 +245,7 @@ ocr = [
     { name = "rapidocr" },
 ]
 scripts = [
+    { name = "fakeredis" },
     { name = "tqdm" },
 ]
 
@@ -252,6 +253,7 @@ scripts = [
 requires-dist = [
     { name = "blitzid", extras = ["api", "ocr", "scripts", "dev"], marker = "extra == 'all'" },
     { name = "fakeredis", marker = "extra == 'dev'" },
+    { name = "fakeredis", marker = "extra == 'scripts'" },
     { name = "fastapi", marker = "extra == 'api'" },
     { name = "fastapi", marker = "extra == 'dev'" },
     { name = "httpx", marker = "extra == 'dev'" },

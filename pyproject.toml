@@ -55,6 +55,8 @@ api = [
 ]
 scripts = [
     "tqdm",
+    # api_smoke.py's in-process job store double (scripts/ diagnostics).
+    "fakeredis",
 ]
 dev = [
     "pytest",

@@ -1,12 +1,27 @@
+# Deployment stack for Coolify and plain Docker. The image bakes every
+# engine's weights (SCRFD, ArcFace, FairFace, RapidOCR) and installs
+# every runtime feature (face detection, face verification, face
+# attributes, OCR, MRZ, structured extraction, tracing), so cold start
+# is instant and this file only wires runtime configuration.
+#
+# Coolify: point the service at this file and set these in its
+# environment tab — BLITZID_LLM_BASE_URL, BLITZID_LLM_API_KEY,
+# BLITZID_LLM_MODEL (required by the `structured` engine; /health shows
+# it). Optional: the LANGFUSE_* trio to trace the LLM calls (spans
+# carry OCR text, so point it at infrastructure you trust) and the
+# BLITZID_API_* queue knobs below. Plain `docker compose up` reads the
+# same names from .env.
+#
+# CI sets BLITZID_IMAGE_TAG to the release tag so the smoke test runs
+# the exact image it is about to push. Released tags can skip the build
+# and run the published image instead:
+#   docker compose up --no-build
+# after `docker pull ghcr.io/malvavisc0/blitzid:latest`.
 services:
   api:
     build: .
     # Compose tags the locally built image with this name (defaults to
-    # :latest); CI sets BLITZID_IMAGE_TAG to the release tag so the
-    # smoke test runs the exact image it is about to push. Released
-    # tags can skip the build and run the published image instead:
-    #   docker compose up --no-build
-    # after `docker pull ghcr.io/malvavisc0/blitzid:latest`.
+    # :latest).
     image: ghcr.io/malvavisc0/blitzid:${BLITZID_IMAGE_TAG:-latest}
     ports:
       - "8000:8000"
@@ -15,9 +30,37 @@ services:
         required: false
     environment:
       BLITZID_API_REDIS_URL: redis://redis:6379/0
+      BLITZID_MODELS_DIR: /models
+      # Structured extraction and tracing switch on when these are set;
+      # empty leaves those engines off and /health says so.
+      BLITZID_LLM_BASE_URL: ${BLITZID_LLM_BASE_URL:-}
+      BLITZID_LLM_API_KEY: ${BLITZID_LLM_API_KEY:-}
+      BLITZID_LLM_MODEL: ${BLITZID_LLM_MODEL:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+      # Queue knobs (defaults shown).
+      BLITZID_API_MAX_UPLOAD_MB: ${BLITZID_API_MAX_UPLOAD_MB:-20}
+      BLITZID_API_JOB_TTL_SECONDS: ${BLITZID_API_JOB_TTL_SECONDS:-900}
+      BLITZID_API_MAX_QUEUED_JOBS: ${BLITZID_API_MAX_QUEUED_JOBS:-50}
+      BLITZID_API_MAX_CONCURRENT_JOBS: ${BLITZID_API_MAX_CONCURRENT_JOBS:-2}
+      BLITZID_API_JOB_LEASE_SECONDS: ${BLITZID_API_JOB_LEASE_SECONDS:-120}
     restart: unless-stopped
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     # Optional: mount local weights over the baked /models directory.
     # volumes:
     #   - ./models:/models
@@ -26,3 +69,8 @@ services:
     # Persistence off: jobs live in RAM only — nothing ever reaches disk.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

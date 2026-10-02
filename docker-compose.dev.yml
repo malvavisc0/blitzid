@@ -11,6 +11,7 @@
 # Feature checklist (curl http://localhost:8000/health):
 #   face / verify   — always on (weights are baked into the image)
 #   attributes      — always on (FairFace weights are baked in)
+#   antispoof       — always on (MiniFASNet weights are baked in)
 #   ocr / mrz       — always on (weights are baked into the image)
 #   structured      — needs BLITZID_LLM_BASE_URL, BLITZID_LLM_API_KEY
 #                     and BLITZID_LLM_MODEL: your OpenAI-compatible

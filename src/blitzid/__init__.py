@@ -9,6 +9,8 @@ Public API
 - ``VerificationResult`` — verification outcome (verdict, similarity, threshold).
 - ``FaceAttributeReader`` — age group, gender, and race per face.
 - ``FaceAttributes`` — one face's predicted attributes.
+- ``AntiSpoofReader`` — passive live-vs-spoof scores per face.
+- ``AntiSpoofResult`` — one face's spoof scores (paper, real, screen).
 - ``RapidOCRReader`` — the RapidOCR-based text reader (``ocr`` extra).
 - ``OCRText`` — recognized text line (bbox, text, confidence).
 - ``MRZReader`` — the ICAO 9303 machine-readable zone reader (``ocr`` extra).
@@ -17,8 +19,9 @@ Public API
   (``ocr`` extra).
 - ``StructuredOCR``, ``ExtractedField`` — structured-output schemas.
 - ``cross_check`` — field-by-field comparison of the printed fields
-  against the machine-readable zone.
-- ``ConsistencyReport``, ``FieldComparison`` — consistency records.
+  against the machine-readable zone and the portrait photo.
+- ``ConsistencyReport``, ``FieldComparison``, ``PhotoComparison`` —
+  consistency records.
 - ``DocumentCropper`` — document localization, perspective crop, and QC.
 - ``QualityReport`` — document crop quality-check verdict.
 - ``BlitzIDError``, ``ModelError``, ``ImageError``, ``MRZError``,
@@ -32,11 +35,17 @@ from blitzid.exceptions import (
     ModelError,
     MRZError,
 )
+from blitzid.face._antispoof import AntiSpoofReader, AntiSpoofResult
 from blitzid.face._attributes import FaceAttributeReader, FaceAttributes
 from blitzid.face._face import DetectionMetrics, Face, VerificationResult
 from blitzid.face.detector import FaceDetectorDNN
 from blitzid.face.verifier import FaceVerifier
-from blitzid.reading.consistency import ConsistencyReport, FieldComparison, cross_check
+from blitzid.reading.consistency import (
+    ConsistencyReport,
+    FieldComparison,
+    PhotoComparison,
+    cross_check,
+)
 from blitzid.reading.document import DocumentCropper, QualityReport
 from blitzid.reading.mrz import MRZReader, MRZRecord
 from blitzid.reading.ocr import OCRText, RapidOCRReader
@@ -53,6 +62,8 @@ ImageProcessingError = ImageError
 InvalidParameterError = BlitzIDError
 
 __all__ = [
+    "AntiSpoofReader",
+    "AntiSpoofResult",
     "BlitzIDError",
     "ConsistencyReport",
     "DetectionMetrics",
@@ -76,6 +87,7 @@ __all__ = [
     "ModelDownloadError",
     "ModelError",
     "OCRText",
+    "PhotoComparison",
     "QualityReport",
     "RapidOCRReader",
     "StructuredOCR",

@@ -1,7 +1,8 @@
 # Deployment stack for Coolify and plain Docker. The image bakes every
-# engine's weights (SCRFD, ArcFace, FairFace, RapidOCR) and installs
-# every runtime feature (face detection, face verification, face
-# attributes, OCR, MRZ, structured extraction, tracing), so cold start
+# engine's weights (SCRFD, ArcFace, FairFace, MiniFASNet, RapidOCR) and
+# installs every runtime feature (face detection, face verification,
+# face attributes, face anti-spoofing, OCR, MRZ, structured
+# extraction, tracing), so cold start
 # is instant and this file only wires runtime configuration.
 #
 # Coolify: point the service at this file and set these in its

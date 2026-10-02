@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from blitzid import (
+    AntiSpoofResult,
     ExtractedField,
     Face,
     FaceAttributes,
@@ -239,6 +240,31 @@ class _StubAttributeReader:
         return self._attributes
 
 
+class _StubAntiSpoofReader:
+    """AntiSpoofReader stand-in returning fixed scores or an error."""
+
+    def __init__(self, scores: list[Any] | Exception) -> None:
+        self._scores = scores
+        self.calls = 0
+
+    def read(self, image_input: Any) -> list[Any]:
+        self.calls += 1
+        if isinstance(self._scores, Exception):
+            raise self._scores
+        return self._scores
+
+
+class _SequenceDetector(_StubDetector):
+    """Detector stub returning one face list per call, frame by frame."""
+
+    def __init__(self, batches: list[list[Any]]) -> None:
+        super().__init__([_face()])
+        self._batches = list(batches)
+
+    def detect_face_landmarks(self, image_input: Any) -> list[Any]:
+        return self._batches.pop(0)
+
+
 class _StubVerifier:
     """FaceVerifier stand-in recording the faces it is asked to compare."""
 
@@ -353,6 +379,31 @@ def _face_attributes() -> Any:
     )
 
 
+def _zoom_face(height: int) -> Face:
+    return Face(
+        bbox=(30, 10, 40, height),
+        confidence=0.9,
+        landmarks=((40, 40), (60, 40), (50, 55), (40, 70), (60, 70)),
+    )
+
+
+def _spoof_result() -> Any:
+    return AntiSpoofResult(
+        bbox=(10, 10, 60, 60),
+        confidence=0.9,
+        live_score=0.93,
+        paper_score=0.05,
+        screen_score=0.02,
+    )
+
+
+def _frames() -> dict[str, tuple[str, bytes, str]]:
+    return {
+        name: (f"{name}.png", _tiny_image_bytes(), "image/png")
+        for name in ("frame1", "frame2", "frame3")
+    }
+
+
 def _stub_engines(
     faces: list[Any] | Exception | None = None,
     ocr_texts: list[OCRText] | Exception | None = None,
@@ -360,6 +411,7 @@ def _stub_engines(
     verification: VerificationResult | Exception | None = None,
     structured: StructuredOCR | Exception | None = None,
     attributes: list[Any] | Exception | None = None,
+    antispoof: list[Any] | Exception | None = None,
 ) -> Engines:
     return Engines(
         detector=_StubDetector([_face()] if faces is None else faces),
@@ -373,6 +425,9 @@ def _stub_engines(
         ),
         attribute_reader=_StubAttributeReader(
             [_face_attributes()] if attributes is None else attributes
+        ),
+        antispoof_reader=_StubAntiSpoofReader(
+            [_spoof_result()] if antispoof is None else antispoof
         ),
     )
 
@@ -759,6 +814,7 @@ class TestHealth:
                 "face": True,
                 "verify": True,
                 "attributes": True,
+                "antispoof": True,
                 "ocr": True,
                 "mrz": True,
                 "structured": True,
@@ -778,6 +834,7 @@ class TestHealth:
                 "face": False,
                 "verify": False,
                 "attributes": False,
+                "antispoof": False,
                 "ocr": False,
                 "mrz": False,
                 "structured": False,
@@ -950,6 +1007,121 @@ class TestStructuredJob:
             assert _submit(client, types="structured").status_code == 400
 
 
+class TestLiveness:
+    def test_challenge_issues_random_action(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("blitzid.api._liveness.secrets.randbelow", lambda n: 2)
+        with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
+            body = client.post("/liveness/challenge").json()
+        assert body["action"] == "move_closer"
+        assert body["expires_in"] == pytest.approx(120.0)
+
+    def test_session_verifies_the_action(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("blitzid.api._liveness.secrets.randbelow", lambda n: 2)
+        detector = _SequenceDetector(
+            [[_zoom_face(60)], [_zoom_face(70)], [_zoom_face(80)]]
+        )
+        stub = _stub_engines()
+        engines = Engines(
+            detector=detector,
+            ocr_reader=stub.ocr_reader,
+            mrz_reader=stub.mrz_reader,
+            detector_lock=stub.detector_lock,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            challenge = client.post("/liveness/challenge").json()
+            body = client.post(
+                "/liveness/session",
+                data={"challenge_id": challenge["challenge_id"]},
+                files=_frames(),
+            ).json()
+        assert body["live"] is True
+        assert body["action"] == "move_closer"
+        assert body["size_ratio"] == pytest.approx(8 / 6, rel=1e-3)
+
+    def test_challenge_is_claim_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("blitzid.api._liveness.secrets.randbelow", lambda n: 0)
+        stub = _stub_engines()
+        detector = _SequenceDetector([[_face()], [_face()], [_face()]])
+        engines = Engines(
+            detector=detector,
+            ocr_reader=stub.ocr_reader,
+            mrz_reader=stub.mrz_reader,
+            detector_lock=stub.detector_lock,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            challenge = client.post("/liveness/challenge").json()
+            data = {"challenge_id": challenge["challenge_id"]}
+            first = client.post("/liveness/session", data=data, files=_frames())
+            replay = client.post("/liveness/session", data=data, files=_frames())
+        assert first.status_code == 200
+        assert replay.status_code == 410
+
+    def test_missing_face_in_a_frame_422(self) -> None:
+        detector = _SequenceDetector([[_face()], [], [_face()]])
+        stub = _stub_engines()
+        engines = Engines(
+            detector=detector,
+            ocr_reader=stub.ocr_reader,
+            mrz_reader=stub.mrz_reader,
+            detector_lock=stub.detector_lock,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            challenge = client.post("/liveness/challenge").json()
+            response = client.post(
+                "/liveness/session",
+                data={"challenge_id": challenge["challenge_id"]},
+                files=_frames(),
+            )
+        assert response.status_code == 422
+        assert "frame 2" in response.json()["detail"]
+
+    def test_liveness_engine_unavailable_400(self) -> None:
+        engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            challenge = client.post("/liveness/challenge").json()
+            response = client.post(
+                "/liveness/session",
+                data={"challenge_id": challenge["challenge_id"]},
+                files=_frames(),
+            )
+        assert response.status_code == 400
+
+
+class TestAntiSpoofJob:
+    def test_antispoof_section_reports_scores(self) -> None:
+        engines = _stub_engines()
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="antispoof")
+            assert response.status_code == 202
+            body = _poll_done(client, response.json()["job_id"])["antispoof"]
+        first = body["faces"][0]
+        assert "processing_time_ms" in body
+        assert first["bbox"] == [10, 10, 60, 60]
+        assert first["live_score"] == pytest.approx(0.93)
+        assert first["paper_score"] == pytest.approx(0.05)
+        assert first["screen_score"] == pytest.approx(0.02)
+
+    def test_antispoof_error_is_section_error(self) -> None:
+        engines = _stub_engines(antispoof=ModelError("weights not loaded"))
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="antispoof,face")
+            body = _poll_done(client, response.json()["job_id"])
+            assert body["antispoof"]["error"] == "weights not loaded"
+            assert "faces" in body["face"]
+
+    def test_antispoof_engine_unavailable_400(self) -> None:
+        engines = Engines(
+            detector=None,
+            ocr_reader=None,
+            mrz_reader=None,
+            antispoof_reader=None,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            assert _submit(client, types="antispoof").status_code == 400
+
+
 class TestAttributesJob:
     def test_attributes_section_reports_faces(self) -> None:
         engines = _stub_engines()
@@ -1022,13 +1194,14 @@ class TestConsistencyJob:
     def test_sections_share_per_job_work(self) -> None:
         engines = _stub_engines(structured=_consistent_record())
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            response = _submit(client, types="mrz,structured,consistency")
+            response = _submit(client, types="antispoof,mrz,structured,consistency")
             body = _poll_done(client, response.json()["job_id"])
         assert body["status"] == "done"
         assert engines.ocr_reader.calls == 1
         assert engines.mrz_reader.calls == 1
         assert engines.structured_reader.calls == 1
         assert engines.attribute_reader.calls == 1
+        assert engines.antispoof_reader.calls == 1
 
     def test_mismatch_flips_consistent(self) -> None:
         record = StructuredOCR(

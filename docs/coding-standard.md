@@ -134,14 +134,16 @@ Write the simplest correct solution. Delete anything that isn't needed.
 - Exceptions in `src/blitzid/exceptions.py`: `BlitzIDError` base,
   `ModelError` (model download/load), `ImageError` (load/validate/
   process), `MRZError` (MRZ not found / malformed / failed check-digit
-  validation).
+  validation), `FaceVerificationError` (no face for verification).
 - Optional deps (PIL, rapidocr via the `ocr` extra) are lazy-imported
   inside functions, guarded, with targeted `# type: ignore` codes; core
   must work without them.
 - The MRZ layer (`src/blitzid/reading/mrz.py`) is pure ICAO 9303 logic
-  over the OCR reader's text lines — no new models, no fuzzy OCR-error
-  correction: check digits and letter-only field validation gate
-  everything, and a failing field raises `MRZError`.
+  over the OCR reader's text lines — no new models, no guessy repair:
+  obvious OCR confusions (0/O, 1/I, 2/Z, 5/S, 6/G, 8/B) resolve
+  deterministically by each field's alphabet, check digits and
+  letter-only field validation gate everything else, and a failing
+  field raises `MRZError`.
 - Images normalize to 3-channel BGR `np.ndarray`; `ImageInput` is
   `path | ndarray | PIL Image`. SCRFD runs letterboxed at `det_size`
   (default 640×640, multiples of 32); boxes map back to original image

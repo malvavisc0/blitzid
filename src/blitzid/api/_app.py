@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -40,18 +41,23 @@ from blitzid.api._jobs import (
     RedisJobStore,
     StaleClaimError,
 )
+from blitzid.api._liveness import ChallengeStore
 from blitzid.api._schemas import (
+    ChallengeResponse,
     ComparedFace,
     CropResponse,
     FaceRef,
     HealthResponse,
     JobCreated,
+    LivenessResponse,
     VerifyResponse,
 )
 from blitzid.api._upload import encode_jpeg_b64, validate_image_upload
 from blitzid.exceptions import BlitzIDError, FaceVerificationError
+from blitzid.face._antispoof import AntiSpoofReader
 from blitzid.face._attributes import FaceAttributeReader
 from blitzid.face._face import Face
+from blitzid.face._motion import verify_action
 from blitzid.face.detector import FaceDetectorDNN
 from blitzid.face.verifier import FaceVerifier
 from blitzid.reading.document import DocumentCropper
@@ -60,8 +66,9 @@ from blitzid.reading.ocr import RapidOCRReader
 from blitzid.reading.structurize import StructuredOCRReader
 
 _ANALYSIS_TYPES = frozenset(
-    {"face", "attributes", "ocr", "mrz", "structured", "consistency"}
+    {"face", "attributes", "antispoof", "ocr", "mrz", "structured", "consistency"}
 )
+_CHALLENGE_TTL = 120.0
 _SIDES = frozenset({"front", "back", "unknown"})
 _LOG = logging.getLogger(__name__)
 
@@ -107,6 +114,7 @@ def _build_engines() -> Engines:
         detector = None
     verifier = None
     attribute_reader = None
+    antispoof_reader = None
     if detector is not None:
         try:
             verifier = FaceVerifier(detector=detector, log_level=logging.WARNING)
@@ -118,6 +126,12 @@ def _build_engines() -> Engines:
             )
         except BlitzIDError as e:
             _LOG.warning("attribute engine unavailable: %s", e)
+        try:
+            antispoof_reader = AntiSpoofReader(
+                detector=detector, log_level=logging.WARNING
+            )
+        except BlitzIDError as e:
+            _LOG.warning("antispoof engine unavailable: %s", e)
     ocr_reader = None
     mrz_reader = None
     try:
@@ -137,6 +151,7 @@ def _build_engines() -> Engines:
         verifier=verifier,
         structured_reader=structured_reader,
         attribute_reader=attribute_reader,
+        antispoof_reader=antispoof_reader,
     )
 
 
@@ -313,6 +328,7 @@ def create_app(
         app.state.config = config
         app.state.store = job_store
         app.state.engines = app_engines
+        app.state.challenges = ChallengeStore(ttl_seconds=_CHALLENGE_TTL)
         app.state.cropper = DocumentCropper(
             detector=app_engines.detector,
             detector_lock=app_engines.detector_lock,
@@ -334,7 +350,7 @@ def _parse_types(values: list[str]) -> list[str]:
         raise HTTPException(
             422,
             "at least one analysis type is required: "
-            "face, attributes, ocr, mrz, structured, consistency",
+            "face, attributes, antispoof, ocr, mrz, structured, consistency",
         )
     unknown = sorted(set(types) - _ANALYSIS_TYPES)
     if unknown:
@@ -408,6 +424,8 @@ def _engine_missing(analysis_type: str, engines: Engines) -> bool:
         return engines.detector is None
     if analysis_type == "attributes":
         return engines.attribute_reader is None
+    if analysis_type == "antispoof":
+        return engines.antispoof_reader is None
     if analysis_type == "mrz":
         return engines.mrz_reader is None
     if analysis_type == "structured":
@@ -430,9 +448,10 @@ def _ensure_engines(types: list[str], engines: Engines) -> None:
         raise HTTPException(
             400,
             f"analysis engine(s) unavailable: {', '.join(unavailable)}; "
-            "ocr/mrz need the blitzid[ocr] extra, face/attributes need the "
-            "SCRFD weights (attributes also FairFace), structured/consistency "
-            "need the ocr extra and BLITZID_LLM_* config",
+            "ocr/mrz need the blitzid[ocr] extra, face/attributes/antispoof "
+            "need the SCRFD weights (attributes also FairFace, antispoof also "
+            "MiniFASNet), structured/consistency need the ocr extra and "
+            "BLITZID_LLM_* config",
         )
 
 
@@ -451,7 +470,7 @@ def _submit_safely(
 
 
 def _register_routes(app: FastAPI) -> None:
-    """Register the /analyze, /jobs, /crop, /verify, and /health routes."""
+    """Register the /analyze, /jobs, /crop, /verify, /liveness, and /health routes."""
 
     @app.post("/analyze", status_code=202, response_model=JobCreated)
     def submit_job(
@@ -549,6 +568,56 @@ def _register_routes(app: FastAPI) -> None:
             backend=result.backend,
         )
 
+    @app.post("/liveness/challenge", response_model=ChallengeResponse)
+    def issue_liveness_challenge(request: Request) -> ChallengeResponse:
+        """Issue one random liveness action (one-use, short-lived)."""
+        challenge_id, action = request.app.state.challenges.issue()
+        return ChallengeResponse(
+            challenge_id=challenge_id, action=action, expires_in=_CHALLENGE_TTL
+        )
+
+    @app.post("/liveness/session", response_model=LivenessResponse)
+    def check_liveness(
+        request: Request,
+        challenge_id: Annotated[str, Form()],
+        frame1: Annotated[UploadFile, File()],
+        frame2: Annotated[UploadFile, File()],
+        frame3: Annotated[UploadFile, File()],
+    ) -> LivenessResponse:
+        """Verify one random action across three capture frames."""
+        engines: Engines = request.app.state.engines
+        if engines.detector is None:
+            raise HTTPException(
+                400, "liveness requires the SCRFD detector (face engine)"
+            )
+        action = request.app.state.challenges.consume(challenge_id)
+        if action is None:
+            raise HTTPException(410, "challenge unknown, expired, or already used")
+        config: ApiConfig = request.app.state.config
+        frames = [
+            validate_image_upload(upload.file.read(), config.max_upload_bytes)
+            for upload in (frame1, frame2, frame3)
+        ]
+        start = time.perf_counter()
+        with engines.detector_lock:
+            found = [engines.detector.detect_face_landmarks(frame) for frame in frames]
+        try:
+            picked = [
+                _pick_face(faces, None, f"frame {index + 1}")
+                for index, faces in enumerate(found)
+            ]
+        except FaceVerificationError as e:
+            raise HTTPException(422, str(e)) from e
+        evidence = verify_action(action, picked)
+        return LivenessResponse(
+            live=evidence.verified,
+            action=action,
+            nose_shift=evidence.nose_shift,
+            mouth_ratio_change=evidence.mouth_ratio_change,
+            size_ratio=evidence.size_ratio,
+            processing_time_ms=round((time.perf_counter() - start) * 1000, 1),
+        )
+
     @app.get("/health", response_model=HealthResponse)
     def health(request: Request, response: Response) -> HealthResponse:
         """Report engine, Redis, and job availability for orchestration.
@@ -569,6 +638,7 @@ def _register_routes(app: FastAPI) -> None:
                 "face": engines.detector is not None,
                 "verify": engines.verifier is not None,
                 "attributes": engines.attribute_reader is not None,
+                "antispoof": engines.antispoof_reader is not None,
                 "ocr": engines.ocr_reader is not None,
                 "mrz": engines.mrz_reader is not None,
                 "structured": engines.structured_reader is not None,

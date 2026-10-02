@@ -42,6 +42,25 @@ class ComparedFace(BaseModel):
     alternatives: list[FaceRef]
 
 
+class ChallengeResponse(BaseModel):
+    """200 response for POST /liveness/challenge."""
+
+    challenge_id: str
+    action: str
+    expires_in: float
+
+
+class LivenessResponse(BaseModel):
+    """200 response for POST /liveness/session."""
+
+    live: bool
+    action: str
+    nose_shift: float
+    mouth_ratio_change: float
+    size_ratio: float
+    processing_time_ms: float
+
+
 class VerifyResponse(BaseModel):
     """200 response for POST /verify — 1:1 face comparison with evidence."""
 

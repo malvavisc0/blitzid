@@ -1,9 +1,11 @@
-# Onboarding users with the BlitzID API
+# Composing verification flows with the BlitzID API
 
-Two kinds of input go in and decisions come out: a photo of the user's
-face and photos of their documents. This guide is the full path, for
-the two people who need it: developers wiring an onboarding flow into
-an app, and the admin running the service. Every command below runs
+Blocks, not a pipeline: every endpoint stands alone, and each product
+picks only what its signup needs. Two kinds of input go in and facts
+come out: photos of a person's face and photos of their documents.
+This guide lists the blocks, then recipes of increasing size, and it
+is for the two people who need it: developers wiring a flow into a
+product, and the admin running the service. Every command below runs
 against a local stack.
 
 ## What the service does, and what stays yours
@@ -58,18 +60,57 @@ would trust with that.
 
 ### Check it is healthy
 
-`GET /health` returns `200` with six model flags: `face`, `verify`,
-`attributes`, `ocr`, `mrz`, `structured`. A `false` flag means that
-analysis returns `400` with the missing piece named. `503` means the
-job store is down and the container cannot accept work.
+`GET /health` returns `200` with seven model flags: `face`, `verify`,
+`attributes`, `antispoof`, `ocr`, `mrz`, `structured`. A `false` flag
+means that analysis returns `400` with the missing piece named. `503`
+means the job store is down and the container cannot accept work.
 
-## For developers: wiring an onboarding flow
+## The blocks
+
+| Block | Call | Gives you |
+|---|---|---|
+| Photo quality gate | `POST /crop` | `pass`/`warn`/`reject` verdict, per-check detail, and a corrected crop. Works on documents and selfies alike |
+| Data extraction | `POST /analyze -F types=ocr,mrz,structured` | printed fields, code-strip fields (check digits validated), typed records |
+| Age signal | `POST /analyze -F types=attributes` | age band, gender, and race per face |
+| Spoof signal | `POST /analyze -F types=antispoof` | per-face scores: live, printed photo, screen photo |
+| Document self-check | `POST /analyze -F types=consistency` | printed text vs code strip vs portrait, per-field verdicts |
+| Live selfie | `POST /liveness/challenge` + `POST /liveness/session` | one random action (`turn_head`, `smile`, `move_closer`) verified across three frames |
+| Face match | `POST /verify` | similarity, verdict, and both compared crops as evidence |
+| Health | `GET /health` | which engines are loaded |
+
+## Recipes
+
+**+18 age gate (one call).** A social site or content platform that
+only needs to keep minors out:
+
+```bash
+curl -F image=@id.jpg -F types=structured localhost:8000/analyze
+```
+
+Read `date_of_birth` from the `structured` record (or `age` from
+`types=attributes` when only a face is available) and apply your
+policy, e.g. today minus birth date at least 18 years. No selfie, no
+liveness, no MRZ needed. If the age comes from a face rather than a
+document, run the liveness block first.
+
+**Live selfie signup.** A product that accepts people but must see
+them live: run the liveness block as the gate, then `types=antispoof`
+as a second opinion (a `screen_score` or `paper_score` near 1.0 means
+someone pointed a camera at a photo or display). Add `types=attributes`
+for an age band and `POST /verify` when a previous photo exists.
+
+**Full document onboarding.** Marketplace, mobility, finance: the
+document-by-document path in the next section.
+
+## Recipe: a full document onboarding
 
 ### 1. Capture the selfie first
 
-It anchors the person, and the final match needs it. Liveness is your
-app's job: a motion prompt ("turn your head") or a liveness SDK. This
-service only compares photos.
+It anchors the person, and the final match needs it. When the product
+must see a live person, run the liveness block here: issue a
+challenge, show its action in the live camera preview, and record
+three frames while the user performs it. Liveness beyond that is your
+app's job: refuse gallery uploads and capture from a live preview.
 
 ### 2. Capture the identity document
 
@@ -235,8 +276,12 @@ Read this before you promise a flow:
   those cards carries a machine copy with its own checksums, better
   than any OCR. Today the `ocr` and `structured` passes read the
   printed front only.
-- **Liveness.** A phone recording of a photo passes. Your app must do
-  motion prompts or a liveness SDK before the selfie reaches `/verify`.
+- **Video replay and generated faces.** The liveness block stops
+  static spoofs and the `antispoof` block flags cameras pointed at
+  photos and displays. Filming a screen that plays a live video, or a
+  real-time deepfake, is beyond what these catch: that last mile is
+  certified presentation-attack detection (ISO 30107-3 SDKs such as
+  iProov or FaceTec).
 - **Cross-document matching.** Step 7 is yours today.
 - **Eligibility policy.** Age minimums, validity windows, expiry
   cutoffs: compute them from the dates returned. The service reports;

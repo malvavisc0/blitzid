@@ -21,6 +21,9 @@ python scripts/download_models.py --models-dir /models
 - `fairface.onnx` — FairFace attribute model (age group, gender, and
   race per face, ~85 MB); managed by `ModelManager` with the
   `filename`/`url`/`sha256` overrides.
+- `minifasnet_v2.onnx` — MiniFASNetV2 anti-spoof model (live vs
+  printed photo vs screen photo, ~1.7 MB); managed by `ModelManager`
+  with the `filename`/`url`/`sha256` overrides.
 - `rapidocr/` — PP-OCR text detection, direction classification, and text
   recognition models (the `ocr` extra); managed by RapidOCR's downloader,
   redirected from its in-package default.

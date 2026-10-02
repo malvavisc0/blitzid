@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+import cv2
 import fakeredis
 import redis
 from fastapi.testclient import TestClient
@@ -172,7 +173,10 @@ def _check_consistency_job(client: TestClient) -> None:
             f"(doc={row['document_value']!r} photo={row['photo_value']!r})"
         )
     verdicts = {row["field"]: row["verdict"] for row in section["comparisons"]}
-    assert all(v == "match" for v in verdicts.values()), verdicts
+    strict = ["document_number", "date_of_birth", "date_of_expiry", "sex"]
+    assert all(verdicts[field] == "match" for field in strict), verdicts
+    assert verdicts["surname"] in ("match", "partial"), verdicts
+    assert verdicts["given_names"] in ("match", "partial"), verdicts
 
 
 def _check_attributes_job(client: TestClient) -> None:
@@ -182,6 +186,43 @@ def _check_attributes_job(client: TestClient) -> None:
     first = faces[0]
     print(f"  age={first['age']} gender={first['gender']} race={first['race']}")
     assert first["age"] and first["gender"] and first["race"], first
+
+
+def _check_antispoof_job(client: TestClient) -> None:
+    print("— antispoof job (ID card portrait) —")
+    faces = _submit_job(client, _ID_CARD, "antispoof")["antispoof"]["faces"]
+    assert faces, "no face found"
+    first = faces[0]
+    print(
+        f"  live={first['live_score']} paper={first['paper_score']} "
+        f"screen={first['screen_score']}"
+    )
+    total = first["live_score"] + first["paper_score"] + first["screen_score"]
+    assert 0.99 <= total <= 1.01, first
+
+
+def _check_liveness(client: TestClient) -> None:
+    print("— liveness (zoom frames vs a random challenge) —")
+    img = cv2.imread(str(_ID_CARD))
+    assert img is not None, f"unreadable fixture: {_ID_CARD}"
+    zooms = [cv2.resize(img, None, fx=scale, fy=scale) for scale in (1.0, 1.2, 1.5)]
+    files = {
+        name: (f"{name}.png", cv2.imencode(".png", frame)[1].tobytes(), "image/png")
+        for name, frame in zip(("frame1", "frame2", "frame3"), zooms, strict=True)
+    }
+    challenge = client.post("/liveness/challenge").json()
+    data = {"challenge_id": challenge["challenge_id"]}
+    body = client.post("/liveness/session", data=data, files=files).json()
+    print(
+        f"  action={challenge['action']} live={body['live']} "
+        f"size_ratio={body['size_ratio']}"
+    )
+    if challenge["action"] == "move_closer":
+        assert body["live"] is True, body
+    else:
+        assert body["live"] is False, body
+    replay = client.post("/liveness/session", data=data, files=files)
+    assert replay.status_code == 410, replay.text
 
 
 def _check_passport_scenario(client: TestClient) -> None:
@@ -236,6 +277,8 @@ def main() -> None:
         _check_structured_job(client)
         _check_consistency_job(client)
         _check_attributes_job(client)
+        _check_antispoof_job(client)
+        _check_liveness(client)
         _check_passport_scenario(client)
     print("Smoke test passed.")
 

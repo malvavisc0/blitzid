@@ -19,6 +19,11 @@ from pathlib import Path
 
 from blitzid import RapidOCRReader
 from blitzid._models import ModelManager
+from blitzid.face._antispoof import (
+    ANTISPOOF_MODEL_FILENAME,
+    ANTISPOOF_MODEL_SHA256,
+    ANTISPOOF_MODEL_URL,
+)
 from blitzid.face._arcface import (
     ARCFACE_MODEL_FILENAME,
     ARCFACE_MODEL_SHA256,
@@ -78,6 +83,20 @@ def _download_attributes(models_dir: Path) -> None:
     print(f"FairFace attributes: {manager.model_path} ({size_kb:.0f} KB)")
 
 
+def _download_antispoof(models_dir: Path) -> None:
+    """Download the MiniFASNet anti-spoof weights if missing."""
+    manager = ModelManager(
+        models_dir,
+        logging.getLogger("download_models"),
+        filename=ANTISPOOF_MODEL_FILENAME,
+        url=ANTISPOOF_MODEL_URL,
+        sha256=ANTISPOOF_MODEL_SHA256,
+    )
+    manager.ensure_model_exists()
+    size_kb = manager.model_path.stat().st_size / 1024
+    print(f"MiniFASNet anti-spoof: {manager.model_path} ({size_kb:.0f} KB)")
+
+
 def _download_rapidocr(models_dir: Path) -> None:
     """Download the RapidOCR text-reading weights if the extra is installed."""
     try:
@@ -97,6 +116,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     _download_scrfd(args.models_dir)
     _download_arcface(args.models_dir)
     _download_attributes(args.models_dir)
+    _download_antispoof(args.models_dir)
     _download_rapidocr(args.models_dir)
 
 

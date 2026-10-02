@@ -18,6 +18,7 @@ import numpy as np
 from blitzid._image import crop_with_padding
 from blitzid.api._upload import decode_image_bytes, dims_within_bounds, encode_jpeg_b64
 from blitzid.exceptions import BlitzIDError, ModelError
+from blitzid.face._antispoof import AntiSpoofReader, AntiSpoofResult
 from blitzid.face._attributes import FaceAttributeReader, FaceAttributes
 from blitzid.face._face import Face
 from blitzid.face.detector import FaceDetectorDNN
@@ -47,6 +48,7 @@ class Engines:
     verifier: FaceVerifier | None = None
     structured_reader: StructuredOCRReader | None = None
     attribute_reader: FaceAttributeReader | None = None
+    antispoof_reader: AntiSpoofReader | None = None
     detector_lock: Lock = field(default_factory=Lock)
     ocr_lock: Lock = field(default_factory=Lock)
     structured_lock: Lock = field(default_factory=Lock)
@@ -149,6 +151,23 @@ def _read_attributes(
     return _memoized(memo, "attributes", _load)
 
 
+def _read_antispoof(
+    img: np.ndarray, engines: Engines, memo: dict[str, Any]
+) -> list[AntiSpoofResult]:
+    """Score the image's faces against spoofing (shared between sections)."""
+    reader = engines.antispoof_reader
+    if reader is None:
+        raise ModelError(
+            "antispoof analysis requires the SCRFD detector and MiniFASNet weights"
+        )
+
+    def _load() -> list[AntiSpoofResult]:
+        with engines.detector_lock:
+            return reader.read(img)
+
+    return _memoized(memo, "antispoof", _load)
+
+
 def _read_mrz(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> MRZRecord:
     """Parse the MRZ (shares the OCR engine)."""
     reader = engines.mrz_reader
@@ -195,6 +214,14 @@ def _run_attributes(
     """Build the attributes section (age group, gender, race per face)."""
     attributes = _read_attributes(img, engines, memo)
     return {"faces": [asdict(item) for item in attributes]}
+
+
+def _run_antispoof(
+    img: np.ndarray, engines: Engines, memo: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the antispoof section (live/paper/screen scores per face)."""
+    scores = _read_antispoof(img, engines, memo)
+    return {"faces": [asdict(item) for item in scores]}
 
 
 def _run_ocr(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> dict[str, Any]:
@@ -256,6 +283,7 @@ _SECTION_RUNNERS: Mapping[
     {
         "face": _run_face,
         "attributes": _run_attributes,
+        "antispoof": _run_antispoof,
         "ocr": _run_ocr,
         "mrz": _run_mrz,
         "structured": _run_structured,

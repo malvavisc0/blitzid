@@ -155,8 +155,9 @@ face). Returns the crop plus a `QualityReport` verdict.
 
 **HTTP API and Docker.** The `api` extra adds a FastAPI service: an
 async job queue (Redis, persistence disabled) for
-face/attributes/OCR/MRZ/structured/consistency, synchronous `/crop`
-(document QC) and `/verify` (1:1 face comparison), and `/health` for
+face/attributes/antispoof/OCR/MRZ/structured/consistency, synchronous
+`/crop` (document QC), `/verify` (1:1 face comparison), and
+`/liveness` (challenge-response liveness), and `/health` for
 orchestration.
 `docker compose up` runs it with all weights baked in.
 
@@ -180,9 +181,11 @@ curl http://localhost:8000/health
 
 **POST /analyze** submits a job (`multipart/form-data`): an `image`
 file (any OpenCV-decodable format; PDFs get a precise `415`) and
-`types` (repeated and/or comma-separated: `face`, `attributes`, `ocr`,
+`types` (repeated and/or comma-separated: `face`, `attributes`,
+`antispoof`, `ocr`,
 `mrz`, `structured`, `consistency` — `attributes` predicts age group,
-gender, and race per face, `structured` rebuilds the OCR text into a
+gender, and race per face, `antispoof` scores live vs printed vs
+screen photos, `structured` rebuilds the OCR text into a
 typed record via the LLM, and `consistency` cross-checks that printed
 record against the machine-readable zone and the portrait's age band
 and gender against the birth date and sex; the photo rows need the
@@ -203,7 +206,7 @@ curl -F image=@id.jpg -F types=face,ocr localhost:8000/analyze
 
 **GET /jobs/{job_id}** polls: `{"status": "queued"}` / `running`; done
 returns `200` with one section per requested type (`face`,
-`attributes`, `ocr`,
+`attributes`, `antispoof`, `ocr`,
 `mrz`, `structured`, `consistency`; a failing section carries
 `{"error": ...}` while
 the others still return). The read claims the result, so every later
@@ -447,6 +450,39 @@ reader = RapidOCRReader()
 for line in reader.read("id_card.jpg"):
     print(line.text, line.confidence)
 ```
+
+### `cross_check`
+
+Defined in [`reading/consistency.py`](src/blitzid/reading/consistency.py).
+Compares one document's two data copies and its portrait photo.
+
+| Method | Description |
+|---|---|
+| `cross_check(structured, mrz, photo=None, today=None)` | Returns a `ConsistencyReport` of per-field verdicts |
+
+**`ConsistencyReport`** — frozen dataclass: `comparisons` (printed
+text vs code strip, one `FieldComparison` per field), `photo_comparisons`
+(two `PhotoComparison` rows: `age` and `sex`), and `consistent` (false
+on any outright mismatch). Every row keeps both values and the model's
+confidence.
+
+### `AntiSpoofReader`
+
+Defined in [`face/_antispoof.py`](src/blitzid/face/_antispoof.py).
+Scores every detected face as a live person, a printed photo, or a
+screen photo with the MiniFASNetV2 model (weights download on first
+use, pinned like the rest).
+
+| Method | Description |
+|---|---|
+| `read(image_input)` | Returns `list[AntiSpoofResult]`, one per detected face |
+
+**`AntiSpoofResult`** — frozen dataclass: `bbox`, `confidence`, and
+the three model scores `live_score`, `paper_score`, `screen_score`.
+Treat it as an advisory layer: it catches printed and screen photos of
+still images, not video replay of a moving person and not generated
+faces. The `/liveness` challenge is the gate; this is the second
+opinion.
 
 ### `FaceAttributeReader`
 

@@ -27,30 +27,41 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from typing import Annotated, Any
 
+import numpy as np
 import redis
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 
-from .. import (
-    DocumentCropper,
-    FaceDetectorDNN,
-    FaceVerifier,
-    MRZReader,
-    RapidOCRReader,
-    StructuredOCRReader,
-)
-from ..exceptions import BlitzIDError, FaceVerificationError
-from ._analyze import Engines, run_job
-from ._jobs import (
+from blitzid._image import crop_with_padding
+from blitzid.api._analyze import FACE_CROP_PADDING, Engines, run_job
+from blitzid.api._jobs import (
     ClaimedJob,
     JobSnapshot,
     QueueFullError,
     RedisJobStore,
     StaleClaimError,
 )
-from ._schemas import CropResponse, HealthResponse, JobCreated, VerifyResponse
-from ._upload import encode_jpeg_b64, validate_image_upload
+from blitzid.api._schemas import (
+    ComparedFace,
+    CropResponse,
+    FaceRef,
+    HealthResponse,
+    JobCreated,
+    VerifyResponse,
+)
+from blitzid.api._upload import encode_jpeg_b64, validate_image_upload
+from blitzid.exceptions import BlitzIDError, FaceVerificationError
+from blitzid.face._attributes import FaceAttributeReader
+from blitzid.face._face import Face
+from blitzid.face.detector import FaceDetectorDNN
+from blitzid.face.verifier import FaceVerifier
+from blitzid.reading.document import DocumentCropper
+from blitzid.reading.mrz import MRZReader
+from blitzid.reading.ocr import RapidOCRReader
+from blitzid.reading.structurize import StructuredOCRReader
 
-_ANALYSIS_TYPES = frozenset({"face", "ocr", "mrz", "structured"})
+_ANALYSIS_TYPES = frozenset(
+    {"face", "attributes", "ocr", "mrz", "structured", "consistency"}
+)
 _SIDES = frozenset({"front", "back", "unknown"})
 _LOG = logging.getLogger(__name__)
 
@@ -95,11 +106,18 @@ def _build_engines() -> Engines:
         _LOG.warning("face engine unavailable: %s", e)
         detector = None
     verifier = None
+    attribute_reader = None
     if detector is not None:
         try:
             verifier = FaceVerifier(detector=detector, log_level=logging.WARNING)
         except BlitzIDError as e:
             _LOG.warning("verification engine unavailable: %s", e)
+        try:
+            attribute_reader = FaceAttributeReader(
+                detector=detector, log_level=logging.WARNING
+            )
+        except BlitzIDError as e:
+            _LOG.warning("attribute engine unavailable: %s", e)
     ocr_reader = None
     mrz_reader = None
     try:
@@ -118,6 +136,7 @@ def _build_engines() -> Engines:
         mrz_reader=mrz_reader,
         verifier=verifier,
         structured_reader=structured_reader,
+        attribute_reader=attribute_reader,
     )
 
 
@@ -313,7 +332,9 @@ def _parse_types(values: list[str]) -> list[str]:
     types = [value for value in flat if value]
     if not types:
         raise HTTPException(
-            422, "at least one analysis type is required: face, ocr, mrz, structured"
+            422,
+            "at least one analysis type is required: "
+            "face, attributes, ocr, mrz, structured, consistency",
         )
     unknown = sorted(set(types) - _ANALYSIS_TYPES)
     if unknown:
@@ -322,14 +343,81 @@ def _parse_types(values: list[str]) -> list[str]:
     return list(dict.fromkeys(types))
 
 
+def _parse_bbox(value: str | None, field: str) -> tuple[int, int, int, int] | None:
+    """Parse an optional ``x,y,w,h`` form field (None when omitted).
+
+    Raises:
+        HTTPException: ``422`` for a malformed or degenerate box.
+    """
+    if value is None or not value.strip():
+        return None
+    try:
+        x, y, w, h = (int(part) for part in value.split(","))
+    except ValueError as e:
+        raise HTTPException(422, f"{field} must be 'x,y,w,h' integers") from e
+    if w <= 0 or h <= 0:
+        raise HTTPException(422, f"{field} width and height must be positive")
+    return (x, y, w, h)
+
+
+def _overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> int:
+    """Intersection area of two ``(x, y, w, h)`` boxes."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    width = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    height = max(0, min(ay + ah, by + bh) - max(ay, by))
+    return width * height
+
+
+def _pick_face(
+    faces: list[Face], pinned: tuple[int, int, int, int] | None, image: str
+) -> Face:
+    """Pick the compared face: best overlap with a pinned box, else best score.
+
+    Raises:
+        FaceVerificationError: When the image holds no usable face.
+    """
+    if not faces:
+        raise FaceVerificationError(f"No face detected in {image}")
+    if pinned is None:
+        return max(faces, key=lambda f: f.confidence)
+    best = max(faces, key=lambda f: _overlap(f.bbox, pinned))
+    if _overlap(best.bbox, pinned) <= 0:
+        raise FaceVerificationError(f"No face found in the pinned region of {image}")
+    return best
+
+
+def _face_evidence(img: np.ndarray, selected: Face, faces: list[Face]) -> ComparedFace:
+    """Build the /verify evidence for one compared face."""
+    crop = crop_with_padding(img, selected.bbox, FACE_CROP_PADDING)
+    return ComparedFace(
+        bbox=list(selected.bbox),
+        confidence=selected.confidence,
+        crop_base64=encode_jpeg_b64(crop),
+        alternatives=[
+            FaceRef(bbox=list(face.bbox), confidence=face.confidence)
+            for face in faces
+            if face is not selected
+        ],
+    )
+
+
 def _engine_missing(analysis_type: str, engines: Engines) -> bool:
     """Whether the engine for one analysis type is unavailable."""
     if analysis_type == "face":
         return engines.detector is None
+    if analysis_type == "attributes":
+        return engines.attribute_reader is None
     if analysis_type == "mrz":
         return engines.mrz_reader is None
     if analysis_type == "structured":
         return engines.structured_reader is None or engines.ocr_reader is None
+    if analysis_type == "consistency":
+        return (
+            engines.mrz_reader is None
+            or engines.structured_reader is None
+            or engines.ocr_reader is None
+        )
     return engines.ocr_reader is None
 
 
@@ -342,8 +430,9 @@ def _ensure_engines(types: list[str], engines: Engines) -> None:
         raise HTTPException(
             400,
             f"analysis engine(s) unavailable: {', '.join(unavailable)}; "
-            "ocr/mrz need the blitzid[ocr] extra, face needs the SCRFD "
-            "weights, structured needs the ocr extra and BLITZID_LLM_* config",
+            "ocr/mrz need the blitzid[ocr] extra, face/attributes need the "
+            "SCRFD weights (attributes also FairFace), structured/consistency "
+            "need the ocr extra and BLITZID_LLM_* config",
         )
 
 
@@ -419,10 +508,12 @@ def _register_routes(app: FastAPI) -> None:
         image1: Annotated[UploadFile, File()],
         image2: Annotated[UploadFile, File()],
         threshold: Annotated[float | None, Form()] = None,
+        face1_bbox: Annotated[str | None, Form()] = None,
+        face2_bbox: Annotated[str | None, Form()] = None,
     ) -> VerifyResponse:
-        """Compare the best face in two images (synchronous)."""
+        """Compare one face from each image (synchronous)."""
         engines: Engines = request.app.state.engines
-        if engines.verifier is None:
+        if engines.verifier is None or engines.detector is None:
             raise HTTPException(
                 400,
                 "face verification engine unavailable (SCRFD detector and "
@@ -430,12 +521,18 @@ def _register_routes(app: FastAPI) -> None:
             )
         if threshold is not None and not -1.0 <= threshold <= 1.0:
             raise HTTPException(422, "threshold must be between -1.0 and 1.0")
+        pinned1 = _parse_bbox(face1_bbox, "face1_bbox")
+        pinned2 = _parse_bbox(face2_bbox, "face2_bbox")
         config: ApiConfig = request.app.state.config
         img1 = validate_image_upload(image1.file.read(), config.max_upload_bytes)
         img2 = validate_image_upload(image2.file.read(), config.max_upload_bytes)
+        with engines.detector_lock:
+            faces1 = engines.detector.detect_face_landmarks(img1)
+            faces2 = engines.detector.detect_face_landmarks(img2)
         try:
-            with engines.detector_lock:
-                result = engines.verifier.verify(img1, img2)
+            selected1 = _pick_face(faces1, pinned1, "image1")
+            selected2 = _pick_face(faces2, pinned2, "image2")
+            result = engines.verifier.verify_faces(img1, selected1, img2, selected2)
         except FaceVerificationError as e:
             raise HTTPException(422, str(e)) from e
         if threshold is not None:
@@ -446,6 +543,8 @@ def _register_routes(app: FastAPI) -> None:
             verified=result.verified,
             similarity=result.similarity,
             threshold=result.threshold,
+            face1=_face_evidence(img1, selected1, faces1),
+            face2=_face_evidence(img2, selected2, faces2),
             processing_time_ms=round(result.processing_time * 1000, 1),
             backend=result.backend,
         )
@@ -469,6 +568,7 @@ def _register_routes(app: FastAPI) -> None:
             models={
                 "face": engines.detector is not None,
                 "verify": engines.verifier is not None,
+                "attributes": engines.attribute_reader is not None,
                 "ocr": engines.ocr_reader is not None,
                 "mrz": engines.mrz_reader is not None,
                 "structured": engines.structured_reader is not None,

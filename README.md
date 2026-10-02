@@ -23,9 +23,11 @@ results in RAM only.
   document crop/QC behind a single typed surface, instead of stitching
   a detector, an OCR engine, and your own MRZ code together.
 - **Validation over guessing.** Every MRZ field is gated by ICAO 9303
-  check digits. A zone that does not validate raises `MRZError` naming
-  the failing field, so a wrong-but-plausible document number never
-  comes back from a fuzzy "correction".
+  check digits. Obvious OCR confusions (0/O, 1/I, …) are undone by
+  each field's alphabet before validation, and a zone that still does
+  not validate raises `MRZError` naming the failing field, so a
+  wrong-but-plausible document number never comes back from a fuzzy
+  "correction".
 - **CPU is the target, not a fallback.** The provider is pinned to
   `CPUExecutionProvider`; there is nothing to install for accelerators
   and nothing to fall back from. What runs on your laptop runs the same
@@ -153,8 +155,9 @@ face). Returns the crop plus a `QualityReport` verdict.
 
 **HTTP API and Docker.** The `api` extra adds a FastAPI service: an
 async job queue (Redis, persistence disabled) for
-face/OCR/MRZ/structured, synchronous `/crop` (document QC) and
-`/verify` (1:1 face comparison), and `/health` for orchestration.
+face/attributes/OCR/MRZ/structured/consistency, synchronous `/crop`
+(document QC) and `/verify` (1:1 face comparison), and `/health` for
+orchestration.
 `docker compose up` runs it with all weights baked in.
 
 **Inputs.** File paths, NumPy arrays, and PIL Images.
@@ -165,7 +168,10 @@ The `api` extra (`pip install blitzid[api]`) adds an HTTP service over
 the library: async jobs for the analyses, synchronous document-QC and
 face-verification endpoints, and a health check. Docker is the primary
 deployment: the image bakes all weights for instant cold start and
-talks to a RAM-only Redis.
+talks to a RAM-only Redis. [`docker-compose.yml`](docker-compose.yml)
+is deploy-ready for Coolify (set the `BLITZID_LLM_*` variables in the
+service environment). A step-by-step identity-onboarding guide
+lives in [`docs/integration.md`](docs/integration.md).
 
 ```bash
 docker compose up
@@ -174,12 +180,18 @@ curl http://localhost:8000/health
 
 **POST /analyze** submits a job (`multipart/form-data`): an `image`
 file (any OpenCV-decodable format; PDFs get a precise `415`) and
-`types` (repeated and/or comma-separated: `face`, `ocr`, `mrz`,
-`structured` — the last rebuilds the OCR text into a typed record via
-the LLM, so it also needs the `BLITZID_LLM_*` config).
+`types` (repeated and/or comma-separated: `face`, `attributes`, `ocr`,
+`mrz`, `structured`, `consistency` — `attributes` predicts age group,
+gender, and race per face, `structured` rebuilds the OCR text into a
+typed record via the LLM, and `consistency` cross-checks that printed
+record against the machine-readable zone and the portrait's age band
+and gender against the birth date and sex; the photo rows need the
+`attributes` engine and the last two the
+`BLITZID_LLM_*` config).
 Validation is eager, before the job exists: `422` unknown type or
 missing fields, `400` undecodable bytes or an analysis whose engine is
-unavailable (`ocr`/`mrz` without the `ocr` extra, `structured` without
+unavailable (`ocr`/`mrz` without the `ocr` extra, `structured`/
+`consistency` without
 the extra or the LLM config), `413` above the
 upload cap, `503` + `Retry-After` when the queue is full or Redis is
 down. Accepted jobs return `202`:
@@ -190,8 +202,10 @@ curl -F image=@id.jpg -F types=face,ocr localhost:8000/analyze
 ```
 
 **GET /jobs/{job_id}** polls: `{"status": "queued"}` / `running`; done
-returns `200` with one section per requested type (`face`, `ocr`,
-`mrz`, `structured`; a failing section carries `{"error": ...}` while
+returns `200` with one section per requested type (`face`,
+`attributes`, `ocr`,
+`mrz`, `structured`, `consistency`; a failing section carries
+`{"error": ...}` while
 the others still return). The read claims the result, so every later
 read gets `410 Gone`; unknown ids get `404` (an expired job reads `410` until
 twice the TTL past submission, then `404`); results expire after
@@ -212,6 +226,13 @@ What a done result looks like on the specimen ID (abbreviated):
       }
     ],
     "processing_time_ms": 39.1
+  },
+  "attributes": {
+    "faces": [{"bbox": [49, 91, 84, 116], "confidence": 0.82,
+               "age": "20-29", "gender": "Female",
+               "race": "White", "age_confidence": 0.6,
+               "gender_confidence": 0.95, "race_confidence": 0.7}],
+    "processing_time_ms": 96.4
   },
   "ocr": {
     "lines": [{"bbox": [20, 359, 70, 17], "text": "Specimen", "confidence": 1.0}, …],
@@ -237,6 +258,24 @@ What a done result looks like on the specimen ID (abbreviated):
       "raw_text": "Specimen\nDE BRUIJN\n…"
     },
     "processing_time_ms": 2450.3
+  },
+  "consistency": {
+    "comparisons": [
+      {"field": "document_number", "verdict": "match",
+       "mrz_value": "SPECI2014", "printed_value": "SPECI2014",
+       "printed_confidence": 0.95},
+      {"field": "date_of_birth", "verdict": "match",
+       "mrz_value": "650310", "printed_value": "1965-03-10",
+       "printed_confidence": 0.9}
+    ],
+    "photo_comparisons": [
+      {"field": "age", "verdict": "match", "document_value": "61",
+       "photo_value": "60-69", "photo_confidence": 0.55},
+      {"field": "sex", "verdict": "match", "document_value": "F",
+       "photo_value": "Female", "photo_confidence": 0.97}
+    ],
+    "consistent": true,
+    "processing_time_ms": 4871.0
   }
 }
 ```
@@ -259,18 +298,28 @@ The crop is the canonical image to keep and to re-submit to `/analyze`
 for cleaner OCR/MRZ.
 
 **POST /verify** is synchronous 1:1 face comparison: multipart fields
-`image1` and `image2` (same upload rules as `/analyze`) and an
-optional `threshold` form field (`-1.0`–`1.0`, overriding the service
-default `0.4`) re-deciding the verdict. The best face in each image is
-aligned to the ArcFace template and compared by cosine similarity; an
-image with no detectable face is `422`. The verifier (SCRFD + ArcFace
-weights) loads at service startup alongside the other engines and
-shows as `verify` in `/health`, so the first call carries no warm-up
-at the cost of the extra weights in every deployment's memory:
+`image1` and `image2` (same upload rules as `/analyze`) and two
+optional knobs — `threshold` (`-1.0`–`1.0`, overriding the service
+default `0.4`) and `face1_bbox` / `face2_bbox` (`x,y,w,h` pinning
+which face to compare, e.g. a box from a prior `/analyze` face result;
+handy when a document carries a ghost portrait). Unpinned images use
+the highest-confidence face. The chosen faces are aligned to the
+ArcFace template and compared by cosine similarity; an image with no
+usable face is `422`. The response is the verdict plus the evidence
+used: each compared face with its `bbox`, `confidence`, a
+`crop_base64` thumbnail, and `alternatives` listing the candidates
+that were not picked. The verifier (SCRFD + ArcFace weights) loads at
+service startup alongside the other engines and shows as `verify` in
+`/health`, so the first call carries no warm-up at the cost of the
+extra weights in every deployment's memory:
 
 ```bash
 curl -F image1=@id.jpg -F image2=@selfie.jpg localhost:8000/verify
 # {"verified": true, "similarity": 0.71, "threshold": 0.4,
+#  "face1": {"bbox": [49, 91, 84, 116], "confidence": 0.82,
+#            "crop_base64": "/9j/4AAQ…", "alternatives": []},
+#  "face2": {"bbox": [402, 90, 470, 560], "confidence": 0.97,
+#            "crop_base64": "/9j/4AAQ…", "alternatives": []},
 #  "processing_time_ms": 241.5, "backend": "ONNXRuntime"}
 ```
 
@@ -399,13 +448,32 @@ for line in reader.read("id_card.jpg"):
     print(line.text, line.confidence)
 ```
 
+### `FaceAttributeReader`
+
+Defined in [`face/_attributes.py`](src/blitzid/face/_attributes.py).
+Predicts age group, gender, and race for every detected face with the
+FairFace model (weights download on first use, pinned like the rest).
+
+| Method | Description |
+|---|---|
+| `read(image_input)` | Returns `list[FaceAttributes]`, one per detected face |
+
+**`FaceAttributes`** — frozen dataclass: `bbox`, `confidence` (the
+detector's score), `age` (one of
+`AGE_GROUPS`, e.g. `"20-29"`), `gender` (`"Male"`/`"Female"`), `race`
+(one of `RACES`, the model's seven coarse groups), and one softmax
+`*_confidence` per head. Treat these as descriptive metadata: the
+labels are model opinions over coarse groups, and the race label in
+particular must not drive decisions about people.
+
 ### `MRZReader`
 
 Defined in [`reading/mrz.py`](src/blitzid/reading/mrz.py); requires the `ocr` extra.
 Selects MRZ lines from OCR text, validates them via ICAO 9303 check
 digits, and parses TD1 (3x30, ID cards), TD2 (2x36), and TD3 (2x44,
-passports) zones. No fuzzy OCR-error correction: a zone whose check
-digits or letter-only fields fail raises `MRZError`.
+passports) zones. Obvious OCR confusions (0/O, 1/I, …) are resolved by
+each field's alphabet first; the check digits then gate acceptance,
+and a zone that fails raises `MRZError`.
 
 | Method | Description |
 |---|---|

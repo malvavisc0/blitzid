@@ -26,12 +26,30 @@ class CropResponse(BaseModel):
     verdict: str
 
 
+class FaceRef(BaseModel):
+    """A detected face's location and score (e.g. an unpicked candidate)."""
+
+    bbox: list[int]
+    confidence: float
+
+
+class ComparedFace(BaseModel):
+    """One side of a /verify comparison — the evidence that was used."""
+
+    bbox: list[int]
+    confidence: float
+    crop_base64: str
+    alternatives: list[FaceRef]
+
+
 class VerifyResponse(BaseModel):
-    """200 response for POST /verify — 1:1 face comparison."""
+    """200 response for POST /verify — 1:1 face comparison with evidence."""
 
     verified: bool
     similarity: float
     threshold: float
+    face1: ComparedFace
+    face2: ComparedFace
     processing_time_ms: float
     backend: str
 

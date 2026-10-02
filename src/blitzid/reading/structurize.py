@@ -31,19 +31,19 @@ Requires the ``ocr`` extra (``pip install blitzid[ocr]``).
 
 from __future__ import annotations
 
-import contextlib
 import importlib
 import logging
 import os
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from datetime import date
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..exceptions import BlitzIDError, ModelError
-from ._observability import langfuse_tracing
-from .ocr import OCRText
+from blitzid._dates import parse_date
+from blitzid.exceptions import BlitzIDError, ModelError
+from blitzid.reading._observability import langfuse_tracing
+from blitzid.reading.ocr import OCRText
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
@@ -149,8 +149,6 @@ def _system_prompt(kind: str, today: date) -> str:
     return _PROMPTS[kind] + _common_rules(today)
 
 
-_DATE_FORMATS = ("%Y-%m-%d", "%d.%m.%Y")
-
 _DATE_FIELD_NAMES = frozenset(
     {"date_of_birth", "date_of_expiry", "birth_date", "expiry_date"}
 )
@@ -185,16 +183,6 @@ def _require_ocr_extra() -> None:
             f"Cannot import pydantic-ai (ocr extra): {e}. "
             "Install it: pip install blitzid[ocr]"
         ) from e
-
-
-def _parse_date(value: object) -> object:
-    """Parse date-shaped strings (ISO 8601 or DD.MM.YYYY) into dates."""
-    if not isinstance(value, str):
-        return value
-    for fmt in _DATE_FORMATS:
-        with contextlib.suppress(ValueError):
-            return datetime.strptime(value, fmt).date()
-    return value
 
 
 class ExtractedField(BaseModel):
@@ -240,7 +228,7 @@ class ExtractedField(BaseModel):
         if isinstance(data, Mapping):
             name, value = data.get("name"), data.get("value")
             if isinstance(name, str) and _is_date_field(name):
-                parsed = _parse_date(value)
+                parsed = parse_date(value)
                 if isinstance(parsed, date):
                     return {**dict(data), "value": parsed}
         return data
@@ -335,8 +323,6 @@ class StructuredOCRReader:
         self.api_key = self._require_config(api_key, LLM_API_KEY_ENV, "api_key")
         self.model_name = self._require_config(model_name, LLM_MODEL_ENV, "model_name")
 
-        self._agents: dict[tuple[str, str], Agent[Any, Extraction]] = {}
-
     @staticmethod
     def _require_config(value: str | None, env: str, arg_name: str) -> str:
         """Resolve one setting from the constructor argument, else the environment.
@@ -379,10 +365,7 @@ class StructuredOCRReader:
         if not texts:
             return StructuredOCR(document_type=None if kind == "auto" else kind)
         prompt = self._format_prompt(texts)
-        today = date.today()
-        cache_key = (kind, today.isoformat())
-        agent = self._agents.get(cache_key) or self._create_agent(kind, today)
-        self._agents[cache_key] = agent
+        agent = self._create_agent(kind, date.today())
         try:
             result = agent.run_sync(prompt)
         except BlitzIDError:
@@ -453,6 +436,10 @@ class StructuredOCRReader:
 
     def _create_agent(self, kind: ReadKind, today: date) -> Agent[Any, Extraction]:
         """Build the pydantic-ai agent for one document kind.
+
+        Built per call: a reused agent's HTTP client binds to the event
+        loop of its first call and breaks later calls made from other
+        loops or threads.
 
         Lazy import of the ``ocr`` extra.
 

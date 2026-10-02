@@ -27,11 +27,6 @@ from blitzid.reading.structurize import (
 )
 
 
-def _agent_key(kind: str) -> tuple[str, str]:
-    """Cache key the reader uses for one kind on today's date."""
-    return (kind, date.today().isoformat())
-
-
 @pytest.fixture(autouse=True)
 def _llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Give every test a complete (unused) LLM configuration."""
@@ -127,10 +122,15 @@ class TestFormatPrompt:
 class TestRead:
     def test_empty_input_returns_empty_record_without_endpoint(
         self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         reader = StructuredOCRReader(log_level=logging.WARNING)
+
+        def _boom(kind: object, today: object) -> object:
+            raise AssertionError("the agent must not be built for empty input")
+
+        monkeypatch.setattr(reader, "_create_agent", _boom)
         assert reader.read([]) == StructuredOCR()
-        assert reader._agents == {}
 
     def test_empty_input_with_kind_stamps_document_type(self) -> None:
         reader = StructuredOCRReader(log_level=logging.WARNING)
@@ -138,7 +138,9 @@ class TestRead:
         assert record.document_type == "plate"
         assert record.fields == []
 
-    def test_read_stamps_raw_text_and_normalizes_values(self) -> None:
+    def test_read_stamps_raw_text_and_normalizes_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         class _FakeResult:
             output: StructuredOCR = StructuredOCR(
                 fields=[
@@ -153,7 +155,7 @@ class TestRead:
                 return _FakeResult()
 
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        reader._agents[_agent_key("auto")] = _FakeAgent()  # type: ignore[assignment]
+        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
         texts = [
             OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9),
             OCRText(bbox=(20, 0, 10, 10), text="<SAMPLE", confidence=0.9),
@@ -164,7 +166,9 @@ class TestRead:
         assert record.fields[0].value == "MUSTERMANN"
         assert record.fields[1].value == date(1983, 8, 12)
 
-    def test_explicit_kind_stamps_document_type(self) -> None:
+    def test_explicit_kind_stamps_document_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         class _FakeResult:
             output: StructuredOCR = StructuredOCR()
 
@@ -173,12 +177,14 @@ class TestRead:
                 return _FakeResult()
 
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        reader._agents[_agent_key("mrz")] = _FakeAgent()  # type: ignore[assignment]
+        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
         texts = [OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9)]
         record = reader.read(texts, kind="mrz")
         assert record.document_type == "mrz"
 
-    def test_model_fabricated_raw_text_is_overwritten(self) -> None:
+    def test_model_fabricated_raw_text_is_overwritten(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         class _FakeResult:
             output: StructuredOCR = StructuredOCR(raw_text="INVENTED BY MODEL")
 
@@ -187,12 +193,14 @@ class TestRead:
                 return _FakeResult()
 
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        reader._agents[_agent_key("auto")] = _FakeAgent()  # type: ignore[assignment]
+        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
         texts = [OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9)]
         record = reader.read(texts)
         assert record.raw_text == "P<UTO"
 
-    def test_duplicate_names_collapse_to_highest_confidence(self) -> None:
+    def test_duplicate_names_collapse_to_highest_confidence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         class _FakeResult:
             output: StructuredOCR = StructuredOCR(
                 fields=[
@@ -207,7 +215,7 @@ class TestRead:
                 return _FakeResult()
 
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        reader._agents[_agent_key("auto")] = _FakeAgent()  # type: ignore[assignment]
+        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
         texts = [OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9)]
         record = reader.read(texts)
         assert [(f.name, f.value, f.confidence) for f in record.fields] == [

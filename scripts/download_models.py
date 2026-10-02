@@ -24,6 +24,11 @@ from blitzid.face._arcface import (
     ARCFACE_MODEL_SHA256,
     ARCFACE_MODEL_URL,
 )
+from blitzid.face._attributes import (
+    ATTRIBUTE_MODEL_FILENAME,
+    ATTRIBUTE_MODEL_SHA256,
+    ATTRIBUTE_MODEL_URL,
+)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -59,6 +64,20 @@ def _download_arcface(models_dir: Path) -> None:
     print(f"ArcFace recognizer: {manager.model_path} ({size_kb:.0f} KB)")
 
 
+def _download_attributes(models_dir: Path) -> None:
+    """Download the FairFace attribute weights if missing."""
+    manager = ModelManager(
+        models_dir,
+        logging.getLogger("download_models"),
+        filename=ATTRIBUTE_MODEL_FILENAME,
+        url=ATTRIBUTE_MODEL_URL,
+        sha256=ATTRIBUTE_MODEL_SHA256,
+    )
+    manager.ensure_model_exists()
+    size_kb = manager.model_path.stat().st_size / 1024
+    print(f"FairFace attributes: {manager.model_path} ({size_kb:.0f} KB)")
+
+
 def _download_rapidocr(models_dir: Path) -> None:
     """Download the RapidOCR text-reading weights if the extra is installed."""
     try:
@@ -77,6 +96,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
     _download_scrfd(args.models_dir)
     _download_arcface(args.models_dir)
+    _download_attributes(args.models_dir)
     _download_rapidocr(args.models_dir)
 
 

@@ -18,6 +18,9 @@ python scripts/download_models.py --models-dir /models
 - `arcface_buffalo_m.onnx` — ArcFace face recognizer (InsightFace
   `buffalo_m` recognition weights, ~174 MB, 512-d embeddings); managed
   by `ModelManager` with the `filename`/`url`/`sha256` overrides.
+- `fairface.onnx` — FairFace attribute model (age group, gender, and
+  race per face, ~85 MB); managed by `ModelManager` with the
+  `filename`/`url`/`sha256` overrides.
 - `rapidocr/` — PP-OCR text detection, direction classification, and text
   recognition models (the `ocr` extra); managed by RapidOCR's downloader,
   redirected from its in-package default.

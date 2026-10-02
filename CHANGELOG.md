@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-02
+
 ### Added
 
 - The dev stack (`docker-compose.dev.yml`) now ships a local llama.cpp

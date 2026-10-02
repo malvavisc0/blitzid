@@ -30,7 +30,12 @@ from blitzid.face._attributes import FaceAttributes
 from blitzid.reading.mrz import MRZRecord
 from blitzid.reading.structurize import StructuredOCR
 
-__all__ = ["ConsistencyReport", "FieldComparison", "cross_check"]
+__all__ = [
+    "ConsistencyReport",
+    "FieldComparison",
+    "PhotoComparison",
+    "cross_check",
+]
 
 Verdict = Literal["match", "partial", "mismatch", "unavailable"]
 

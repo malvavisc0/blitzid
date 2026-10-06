@@ -1,3 +1,9 @@
+# ── Production image release ───────────────────────────────────
+# Builds the GHCR image and smoke-tests the compose stack. The
+# compose file binds the API to 127.0.0.1 only (the service has no
+# authentication), so every smoke-test curl targets 127.0.0.1 from
+# the same runner. queue-default mem/queue knobs are tuned for the
+# production box (6 vCPU / 12 GB) — see docs/vps-recommendations.md.
 name: Docker
 
 on:
@@ -24,8 +30,14 @@ jobs:
             -t ghcr.io/malvavisc0/blitzid:latest .
 
       - name: Smoke test (compose up, health, analyze, crop)
+        # The compose file binds the API to 127.0.0.1 only (no auth),
+        # which works here: this runner built the image and reaches it
+        # over the loopback binding. redis needs no pull — it is public.
         env:
           BLITZID_IMAGE_TAG: ${{ github.ref_name }}
+          BLITZID_LLM_BASE_URL: ${{ vars.BLITZID_LLM_BASE_URL || '' }}
+          BLITZID_LLM_API_KEY: ${{ vars.BLITZID_LLM_API_KEY || '' }}
+          BLITZID_LLM_MODEL: ${{ vars.BLITZID_LLM_MODEL || '' }}
         run: |
           docker compose up -d --no-build --wait
           BUILT=$(docker image inspect -f '{{.Id}}' ghcr.io/malvavisc0/blitzid:$GITHUB_REF_NAME)
@@ -33,13 +45,15 @@ jobs:
           echo "built:   $BUILT"
           echo "running: $RUNNING"
           test "${RUNNING#sha256:}" = "${BUILT#sha256:}"
-          curl -fsS http://localhost:8000/health | grep -q '"status":"ok"'
+          # The API answers on 127.0.0.1 only per the compose file; curl
+          # from the same host.
+          curl -fsS http://127.0.0.1:8000/health | grep -q '"status":"ok"'
           JOB=$(curl -fsS \
             -F image=@images/nl_td1_id_specimen.jpg \
-            -F types=face,ocr,mrz http://localhost:8000/analyze)
+            -F types=face,ocr,mrz http://127.0.0.1:8000/analyze)
           ID=$(echo "$JOB" | jq -r .job_id)
           for _ in $(seq 1 60); do
-            RESULT=$(curl -fsS http://localhost:8000/jobs/$ID)
+            RESULT=$(curl -fsS http://127.0.0.1:8000/jobs/$ID)
             STATUS=$(echo "$RESULT" | jq -r .status)
             if [ "$STATUS" = "done" ] || [ "$STATUS" = "failed" ]; then break; fi
             sleep 1
@@ -49,7 +63,7 @@ jobs:
           echo "$RESULT" | grep -q "DE BRUIJN"
           curl -fsS \
             -F image=@images/nl_td1_id_specimen.jpg \
-            -F side=front http://localhost:8000/crop \
+            -F side=front http://127.0.0.1:8000/crop \
             | jq -e '.face_found == true' > /dev/null
           docker compose down -v
 

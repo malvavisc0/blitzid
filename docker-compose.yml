@@ -2,8 +2,8 @@
 # engine's weights (SCRFD, ArcFace, FairFace, MiniFASNet, RapidOCR) and
 # installs every runtime feature (face detection, face verification,
 # face attributes, face anti-spoofing, OCR, MRZ, structured
-# extraction, tracing), so cold start
-# is instant and this file only wires runtime configuration.
+# extraction, tracing), so cold start is instant and this file only
+# wires runtime configuration.
 #
 # Coolify: point the service at this file and set these in its
 # environment tab — BLITZID_LLM_BASE_URL, BLITZID_LLM_API_KEY,
@@ -20,12 +20,12 @@
 # after `docker pull ghcr.io/malvavisc0/blitzid:latest`.
 services:
   api:
-    build: .
-    # Compose tags the locally built image with this name (defaults to
-    # :latest).
     image: ghcr.io/malvavisc0/blitzid:${BLITZID_IMAGE_TAG:-latest}
     ports:
-      - "8000:8000"
+      # Loopback only: the API has no authentication, so a reverse
+      # proxy (Caddy/nginx, or the Coolify proxy) must front it with
+      # TLS and rate limiting. Do not bind to 0.0.0.0.
+      - "127.0.0.1:8000:8000"
     env_file:
       - path: .env
         required: false
@@ -40,12 +40,18 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
-      # Queue knobs (defaults shown).
-      BLITZID_API_MAX_UPLOAD_MB: ${BLITZID_API_MAX_UPLOAD_MB:-20}
+      BLITZID_API_MAX_UPLOAD_MB: ${BLITZID_API_MAX_UPLOAD_MB:-10}
       BLITZID_API_JOB_TTL_SECONDS: ${BLITZID_API_JOB_TTL_SECONDS:-900}
-      BLITZID_API_MAX_QUEUED_JOBS: ${BLITZID_API_MAX_QUEUED_JOBS:-50}
-      BLITZID_API_MAX_CONCURRENT_JOBS: ${BLITZID_API_MAX_CONCURRENT_JOBS:-2}
+      BLITZID_API_MAX_QUEUED_JOBS: ${BLITZID_API_MAX_QUEUED_JOBS:-100}
+      BLITZID_API_MAX_CONCURRENT_JOBS: ${BLITZID_API_MAX_CONCURRENT_JOBS:-5}
       BLITZID_API_JOB_LEASE_SECONDS: ${BLITZID_API_JOB_LEASE_SECONDS:-120}
+    # Engines (~2 GB) + 5 workers + overhead; a leak dies in the
+    # cgroup instead of OOMing the box.
+    mem_limit: 8g
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     depends_on:
       redis:
@@ -60,7 +66,8 @@ services:
         ]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      # Five engines load at startup; give the first probe more slack.
+      start_period: 30s
       retries: 3
     # Optional: mount local weights over the baked /models directory.
     # volumes:
@@ -68,7 +75,29 @@ services:
   redis:
     image: redis:8-alpine
     # Persistence off: jobs live in RAM only — nothing ever reaches disk.
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # Hard memory cap as backpressure: 100 queued × 10 MB uploads plus
+    # running jobs stays under the cap; past it, noeviction makes new
+    # writes fail, which surfaces as clean 503 + Retry-After at the API
+    # instead of an OOM kill.
+    command:
+      [
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--maxmemory",
+        "2gb",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    # Compose network only: no ports exposed, Redis unreachable from
+    # the host or internet.
+    mem_limit: 2.5g
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

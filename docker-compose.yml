@@ -69,9 +69,14 @@ services:
       # Five engines load at startup; give the first probe more slack.
       start_period: 30s
       retries: 3
-    # Optional: mount local weights over the baked /models directory.
-    # volumes:
-    #   - ./models:/models
+    # Weights persistence: the image bakes every engine's weights into
+    # /models, so a volume is optional. Enable it to share one copy
+    # across future replicas or to swap weights without rebuilding the
+    # image. With the mount on an empty volume, run
+    #   docker compose run --rm api python scripts/download_models.py
+    # once to populate it; otherwise keep the baked /models as-is.
+    volumes:
+      - blitzid-models:/models
   redis:
     image: redis:8-alpine
     # Persistence off: jobs live in RAM only — nothing ever reaches disk.
@@ -104,3 +109,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+# Named volume for the engine weights (SCRFD, ArcFace, FairFace,
+# MiniFASNet, RapidOCR) — survives image swaps and container
+# recreation, shared by any future replicas.
+volumes:
+  blitzid-models: {}

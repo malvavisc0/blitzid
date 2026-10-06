@@ -1,6 +1,6 @@
 [project]
 name = "blitzid"
-version = "0.3.2"
+version = "0.3.3"
 description = "Modular DNN-based ID document reading framework (face detection, OCR, MRZ) optimized for CPU deployment"
 readme = "README.md"
 requires-python = ">=3.12"

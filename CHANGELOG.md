@@ -2,7 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.3.0] - 2026-10-06
+
+### Changed
+
+- **Breaking (API):** every HTTP API route now lives under the `/api`
+  prefix — `/api/analyze`, `/api/jobs/{id}`, `/api/crop`, `/api/verify`,
+  `/api/liveness/challenge`, `/api/liveness/session`, `/api/health`.
+  The `status_url` returned by `/api/analyze` now points at
+  `/api/jobs/{id}`. Update any client before upgrading.
+- Deployment hardening in `docker-compose.yml`: the API binds to
+  `127.0.0.1` only (no authentication; a TLS proxy must front it),
+  Redis gets a 2 GB `noeviction` memory cap as clean 503 backpressure,
+  engine weights persist in the `blitzid-models` named volume, both
+  services get `mem_limit`s and log rotation, and the queue defaults
+  are tuned for the production box (5 concurrent jobs, 100-slot queue,
+  10 MB uploads). The CI smoke test matches the loopback binding.
 
 ## [0.2.1] - 2026-10-02
 

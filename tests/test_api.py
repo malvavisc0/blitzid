@@ -462,6 +462,9 @@ def _client(
     return TestClient(app)
 
 
+_API = "/api"
+
+
 def _env_client(
     monkeypatch: pytest.MonkeyPatch,
     store: MemoryJobStore | RedisJobStore | None = None,
@@ -480,7 +483,7 @@ def _submit(
     data: bytes | None = None,
 ) -> Any:
     return client.post(
-        "/analyze",
+        f"{_API}/analyze",
         files={"image": ("doc.png", data or _tiny_image_bytes(), "image/png")},
         data={"types": types},
     )
@@ -489,7 +492,7 @@ def _submit(
 def _poll_done(client: TestClient, job_id: str, timeout: float = 5.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        response = client.get(f"/jobs/{job_id}")
+        response = client.get(f"{_API}/jobs/{job_id}")
         assert response.status_code == 200
         body = response.json()
         if body.get("status") in ("done", "failed"):
@@ -513,7 +516,7 @@ class TestSubmitLifecycle:
             assert response.status_code == 202
             body = response.json()
             assert body["status"] == "queued"
-            assert body["status_url"] == f"/jobs/{body['job_id']}"
+            assert body["status_url"] == f"/api/jobs/{body['job_id']}"
             result = _poll_done(client, body["job_id"])
             assert result["status"] == "done"
             face = result["face"]
@@ -544,11 +547,11 @@ class TestSubmitLifecycle:
             response = _submit(client)
             job_id = response.json()["job_id"]
             assert _poll_done(client, job_id)["status"] == "done"
-            assert client.get(f"/jobs/{job_id}").status_code == 410
+            assert client.get(f"{_API}/jobs/{job_id}").status_code == 410
 
     def test_unknown_job_id_404(self) -> None:
         with _client(store=MemoryJobStore()) as client:
-            response = client.get("/jobs/doesnotexist")
+            response = client.get(f"{_API}/jobs/doesnotexist")
             assert response.status_code == 404
 
     def test_failed_job_reports_error(self) -> None:
@@ -587,9 +590,9 @@ class TestSubmitLifecycle:
             response = _submit(client)
             assert response.status_code == 202
             job_id = response.json()["job_id"]
-            assert client.get(f"/jobs/{job_id}").json()["status"] == "queued"
+            assert client.get(f"{_API}/jobs/{job_id}").json()["status"] == "queued"
             time.sleep(1.3)
-            response = client.get(f"/jobs/{job_id}")
+            response = client.get(f"{_API}/jobs/{job_id}")
             assert response.status_code == 410
 
     def test_lease_sweeper_requeues_abandoned_job(
@@ -733,13 +736,14 @@ class TestSubmitValidation:
     def test_missing_types_422(self) -> None:
         with _client(store=MemoryJobStore()) as client:
             response = client.post(
-                "/analyze", files={"image": ("d.png", _tiny_image_bytes(), "image/png")}
+                f"{_API}/analyze",
+                files={"image": ("d.png", _tiny_image_bytes(), "image/png")},
             )
             assert response.status_code == 422
 
     def test_missing_image_422(self) -> None:
         with _client(store=MemoryJobStore()) as client:
-            response = client.post("/analyze", data={"types": "face"})
+            response = client.post(f"{_API}/analyze", data={"types": "face"})
             assert response.status_code == 422
 
     def test_corrupt_bytes_400(self) -> None:
@@ -808,7 +812,7 @@ class TestSubmitValidation:
 class TestHealth:
     def test_reports_engines_redis_and_jobs(self) -> None:
         with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
-            response = client.get("/health")
+            response = client.get(f"{_API}/health")
             assert response.status_code == 200
             body = response.json()
             assert body["status"] == "ok"
@@ -827,7 +831,7 @@ class TestHealth:
     def test_degraded_without_engines_and_redis(self) -> None:
         engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
         with _client(store=_BrokenStore(), engines=engines) as client:
-            response = client.get("/health")
+            response = client.get(f"{_API}/health")
             assert response.status_code == 503
             body = response.json()
             assert body["status"] == "degraded"
@@ -845,7 +849,7 @@ class TestHealth:
     def test_missing_engines_stay_200(self) -> None:
         engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            response = client.get("/health")
+            response = client.get(f"{_API}/health")
             assert response.status_code == 200
             assert response.json()["status"] == "ok"
 
@@ -854,7 +858,7 @@ class TestCrop:
     def _crop(self, client: TestClient, img: np.ndarray, side: str = "") -> Any:
         files = {"image": ("doc.png", _image_bytes(img), "image/png")}
         data = {"side": side} if side else None
-        return client.post("/crop", files=files, data=data)
+        return client.post(f"{_API}/crop", files=files, data=data)
 
     def test_document_crop_passes(
         self, synthetic_document: Callable[..., np.ndarray]
@@ -925,14 +929,15 @@ class TestCrop:
     def test_corrupt_bytes_400(self) -> None:
         with _client(store=MemoryJobStore()) as client:
             response = client.post(
-                "/crop", files={"image": ("d.png", b"garbage", "image/png")}
+                f"{_API}/crop", files={"image": ("d.png", b"garbage", "image/png")}
             )
             assert response.status_code == 400
 
     def test_pdf_bytes_415(self) -> None:
         with _client(store=MemoryJobStore()) as client:
             response = client.post(
-                "/crop", files={"image": ("d.pdf", b"%PDF-1.4 x", "application/pdf")}
+                f"{_API}/crop",
+                files={"image": ("d.pdf", b"%PDF-1.4 x", "application/pdf")},
             )
             assert response.status_code == 415
 
@@ -1046,7 +1051,7 @@ class TestLiveness:
     ) -> None:
         monkeypatch.setattr("blitzid.api._liveness.secrets.randbelow", lambda n: 2)
         with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
-            body = client.post("/liveness/challenge").json()
+            body = client.post(f"{_API}/liveness/challenge").json()
         assert body["action"] == "move_closer"
         assert body["expires_in"] == pytest.approx(120.0)
 
@@ -1063,9 +1068,9 @@ class TestLiveness:
             detector_lock=stub.detector_lock,
         )
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            challenge = client.post("/liveness/challenge").json()
+            challenge = client.post(f"{_API}/liveness/challenge").json()
             body = client.post(
-                "/liveness/session",
+                f"{_API}/liveness/session",
                 data={"challenge_id": challenge["challenge_id"]},
                 files=_frames(),
             ).json()
@@ -1084,10 +1089,10 @@ class TestLiveness:
             detector_lock=stub.detector_lock,
         )
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            challenge = client.post("/liveness/challenge").json()
+            challenge = client.post(f"{_API}/liveness/challenge").json()
             data = {"challenge_id": challenge["challenge_id"]}
-            first = client.post("/liveness/session", data=data, files=_frames())
-            replay = client.post("/liveness/session", data=data, files=_frames())
+            first = client.post(f"{_API}/liveness/session", data=data, files=_frames())
+            replay = client.post(f"{_API}/liveness/session", data=data, files=_frames())
         assert first.status_code == 200
         assert replay.status_code == 410
 
@@ -1101,9 +1106,9 @@ class TestLiveness:
             detector_lock=stub.detector_lock,
         )
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            challenge = client.post("/liveness/challenge").json()
+            challenge = client.post(f"{_API}/liveness/challenge").json()
             response = client.post(
-                "/liveness/session",
+                f"{_API}/liveness/session",
                 data={"challenge_id": challenge["challenge_id"]},
                 files=_frames(),
             )
@@ -1113,9 +1118,9 @@ class TestLiveness:
     def test_liveness_engine_unavailable_400(self) -> None:
         engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            challenge = client.post("/liveness/challenge").json()
+            challenge = client.post(f"{_API}/liveness/challenge").json()
             response = client.post(
-                "/liveness/session",
+                f"{_API}/liveness/session",
                 data={"challenge_id": challenge["challenge_id"]},
                 files=_frames(),
             )
@@ -1285,7 +1290,7 @@ class TestVerify:
     ) -> Any:
         payload = image_data or _tiny_image_bytes()
         return client.post(
-            "/verify",
+            f"{_API}/verify",
             files={
                 "image1": ("a.png", payload, "image/png"),
                 "image2": ("b.png", payload, "image/png"),
@@ -1400,7 +1405,7 @@ class TestVerify:
     def test_missing_image_422(self) -> None:
         with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
             response = client.post(
-                "/verify",
+                f"{_API}/verify",
                 files={"image1": ("a.png", _tiny_image_bytes(), "image/png")},
             )
             assert response.status_code == 422
@@ -1408,7 +1413,7 @@ class TestVerify:
     def test_corrupt_bytes_400(self) -> None:
         with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
             response = client.post(
-                "/verify",
+                f"{_API}/verify",
                 files={
                     "image1": ("a.png", _tiny_image_bytes(), "image/png"),
                     "image2": ("b.png", b"garbage", "image/png"),
@@ -1419,7 +1424,7 @@ class TestVerify:
     def test_pdf_bytes_415(self) -> None:
         with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
             response = client.post(
-                "/verify",
+                f"{_API}/verify",
                 files={
                     "image1": ("a.pdf", b"%PDF-1.4 x", "application/pdf"),
                     "image2": ("b.png", _tiny_image_bytes(), "image/png"),
@@ -1439,7 +1444,7 @@ class TestVerify:
             BLITZID_API_MAX_UPLOAD_MB="1",
         ) as client:
             response = client.post(
-                "/verify",
+                f"{_API}/verify",
                 files={
                     "image1": (
                         "a.png",

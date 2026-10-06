@@ -31,7 +31,7 @@ docker compose up
 # local iteration: hot code, --reload on edits under ./src
 docker compose -f docker-compose.dev.yml up
 
-curl http://localhost:8000/health
+curl http://localhost:8000/api/health
 ```
 
 The image carries every engine's weights, so cold start needs no
@@ -84,7 +84,7 @@ means the job store is down and the container cannot accept work.
 only needs to keep minors out:
 
 ```bash
-curl -F image=@id.jpg -F types=structured localhost:8000/analyze
+curl -F image=@id.jpg -F types=structured localhost:8000/api/analyze
 ```
 
 Read `date_of_birth` from the `structured` record (or `age` from
@@ -135,7 +135,7 @@ off the holograms, a flat dark surface, no fingers over the edges.
 ### 3. Check each photo before you trust it
 
 ```bash
-curl -F image=@id-front.jpg -F side=front localhost:8000/crop
+curl -F image=@id-front.jpg -F side=front localhost:8000/api/crop
 ```
 
 The response carries `verdict` (`pass`, `warn`, `reject`) plus the
@@ -152,8 +152,8 @@ frame and the glare off the window."
 ```bash
 curl -F image=@id-front-crop.jpg \
     -F types=face,ocr,mrz,structured,consistency \
-    localhost:8000/analyze
-# {"job_id": "<uuid>", "status": "queued", "status_url": "/jobs/<uuid>"}
+    localhost:8000/api/analyze
+# {"job_id": "<uuid>", "status": "queued", "status_url": "/api/jobs/<uuid>"}
 ```
 
 Pick types per document:
@@ -204,7 +204,7 @@ camera and a model.
 
 ```bash
 curl -F image1=@id-front-crop.jpg -F image2=@selfie.jpg \
-    -F face1_bbox=49,91,84,116 localhost:8000/verify
+    -F face1_bbox=49,91,84,116 localhost:8000/api/verify
 ```
 
 Pin the portrait with `face1_bbox` from the `face` section. ID cards

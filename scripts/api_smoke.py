@@ -55,7 +55,7 @@ def _upload(path: Path) -> tuple[str, bytes, str]:
 def _poll(client: TestClient, job_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + _JOB_TIMEOUT
     while time.monotonic() < deadline:
-        response = client.get(f"/jobs/{job_id}")
+        response = client.get(f"/api/jobs/{job_id}")
         assert response.status_code == 200, response.text
         body: dict[str, Any] = response.json()
         if body["status"] in ("done", "failed"):
@@ -67,7 +67,7 @@ def _poll(client: TestClient, job_id: str) -> dict[str, Any]:
 
 def _submit_job(client: TestClient, path: Path, types: str) -> dict[str, Any]:
     response = client.post(
-        "/analyze", files={"image": _upload(path)}, data={"types": types}
+        "/api/analyze", files={"image": _upload(path)}, data={"types": types}
     )
     assert response.status_code == 202, response.text
     return _poll(client, response.json()["job_id"])
@@ -82,7 +82,7 @@ def _section(body: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _check_health(client: TestClient) -> None:
     print("— /health —")
-    body = client.get("/health").json()
+    body = client.get("/api/health").json()
     print(f"  models: {body['models']}")
     assert body["redis"] is True, body
     assert all(body["models"].values()), f"engine(s) missing: {body['models']}"
@@ -107,7 +107,8 @@ def _check_face_counts(client: TestClient) -> None:
 def _check_verify_auto(client: TestClient) -> None:
     print("— /verify (passport portrait vs itself) —")
     response = client.post(
-        "/verify", files={"image1": _upload(_PASSPORT), "image2": _upload(_PASSPORT)}
+        "/api/verify",
+        files={"image1": _upload(_PASSPORT), "image2": _upload(_PASSPORT)},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -132,7 +133,7 @@ def _check_verify_pinned(client: TestClient) -> None:
         "face2_bbox": ",".join(str(v) for v in second),
     }
     files = {"image1": _upload(_CONFERENCE), "image2": _upload(_CONFERENCE)}
-    body = client.post("/verify", files=files, data=pinned).json()
+    body = client.post("/api/verify", files=files, data=pinned).json()
     print(
         f"  compared face1={body['face1']['bbox']} vs face2={body['face2']['bbox']}, "
         f"similarity={body['similarity']:.3f} verified={body['verified']}"
@@ -141,7 +142,7 @@ def _check_verify_pinned(client: TestClient) -> None:
     assert len(body["face1"]["alternatives"]) == len(faces) - 1, body["face1"]
     assert body["verified"] is False, body
     relaxed = client.post(
-        "/verify", files=files, data={**pinned, "threshold": "-1"}
+        "/api/verify", files=files, data={**pinned, "threshold": "-1"}
     ).json()
     print(f"  same pair at threshold=-1: verified={relaxed['verified']}")
     assert relaxed["verified"] is True, relaxed

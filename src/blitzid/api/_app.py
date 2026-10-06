@@ -303,7 +303,7 @@ class _Workers:
 def create_app(
     store: RedisJobStore | None = None, engines: Engines | None = None
 ) -> FastAPI:
-    """Build the FastAPI app.
+    """Build the FastAPI app with every route under the ``/api`` prefix.
 
     Args:
         store: Job store to use; default-constructed from
@@ -472,9 +472,10 @@ def _submit_safely(
 
 
 def _register_routes(app: FastAPI) -> None:
-    """Register the /analyze, /jobs, /crop, /verify, /liveness, and /health routes."""
+    """Register the /api/analyze, /api/jobs, /api/crop, /api/verify,
+    /api/liveness, and /api/health routes."""
 
-    @app.post("/analyze", status_code=202, response_model=JobCreated)
+    @app.post("/api/analyze", status_code=202, response_model=JobCreated)
     def submit_job(
         request: Request,
         image: Annotated[UploadFile, File()],
@@ -487,9 +488,11 @@ def _register_routes(app: FastAPI) -> None:
         validate_image_upload(data, request.app.state.config.max_upload_bytes)
         job_id = uuid.uuid4().hex
         _submit_safely(request.app.state.store, job_id, data, analysis_types)
-        return JobCreated(job_id=job_id, status="queued", status_url=f"/jobs/{job_id}")
+        return JobCreated(
+            job_id=job_id, status="queued", status_url=f"/api/jobs/{job_id}"
+        )
 
-    @app.get("/jobs/{job_id}")
+    @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str, request: Request) -> dict[str, Any]:
         """Poll a job; a done or failed result is claimed by the read."""
         try:
@@ -500,7 +503,7 @@ def _register_routes(app: FastAPI) -> None:
             ) from e
         return _job_response(snapshot)
 
-    @app.post("/crop", response_model=CropResponse)
+    @app.post("/api/crop", response_model=CropResponse)
     def crop_document(
         request: Request,
         image: Annotated[UploadFile, File()],
@@ -523,7 +526,7 @@ def _register_routes(app: FastAPI) -> None:
             verdict=report.verdict,
         )
 
-    @app.post("/verify", response_model=VerifyResponse)
+    @app.post("/api/verify", response_model=VerifyResponse)
     def verify_faces(
         request: Request,
         image1: Annotated[UploadFile, File()],
@@ -570,7 +573,7 @@ def _register_routes(app: FastAPI) -> None:
             backend=result.backend,
         )
 
-    @app.post("/liveness/challenge", response_model=ChallengeResponse)
+    @app.post("/api/liveness/challenge", response_model=ChallengeResponse)
     def issue_liveness_challenge(request: Request) -> ChallengeResponse:
         """Issue one random liveness action (one-use, short-lived)."""
         challenge_id, action = request.app.state.challenges.issue()
@@ -578,7 +581,7 @@ def _register_routes(app: FastAPI) -> None:
             challenge_id=challenge_id, action=action, expires_in=_CHALLENGE_TTL
         )
 
-    @app.post("/liveness/session", response_model=LivenessResponse)
+    @app.post("/api/liveness/session", response_model=LivenessResponse)
     def check_liveness(
         request: Request,
         challenge_id: Annotated[str, Form()],
@@ -620,7 +623,7 @@ def _register_routes(app: FastAPI) -> None:
             processing_time_ms=round((time.perf_counter() - start) * 1000, 1),
         )
 
-    @app.get("/health", response_model=HealthResponse)
+    @app.get("/api/health", response_model=HealthResponse)
     def health(request: Request, response: Response) -> HealthResponse:
         """Report engine, Redis, and job availability for orchestration.
 

@@ -47,13 +47,13 @@ jobs:
           test "${RUNNING#sha256:}" = "${BUILT#sha256:}"
           # The API answers on 127.0.0.1 only per the compose file; curl
           # from the same host.
-          curl -fsS http://127.0.0.1:8000/health | grep -q '"status":"ok"'
+          curl -fsS http://127.0.0.1:8000/api/health | grep -q '"status":"ok"'
           JOB=$(curl -fsS \
             -F image=@images/nl_td1_id_specimen.jpg \
-            -F types=face,ocr,mrz http://127.0.0.1:8000/analyze)
+            -F types=face,ocr,mrz http://127.0.0.1:8000/api/analyze)
           ID=$(echo "$JOB" | jq -r .job_id)
           for _ in $(seq 1 60); do
-            RESULT=$(curl -fsS http://127.0.0.1:8000/jobs/$ID)
+            RESULT=$(curl -fsS http://127.0.0.1:8000/api/jobs/$ID)
             STATUS=$(echo "$RESULT" | jq -r .status)
             if [ "$STATUS" = "done" ] || [ "$STATUS" = "failed" ]; then break; fi
             sleep 1
@@ -63,7 +63,7 @@ jobs:
           echo "$RESULT" | grep -q "DE BRUIJN"
           curl -fsS \
             -F image=@images/nl_td1_id_specimen.jpg \
-            -F side=front http://127.0.0.1:8000/crop \
+            -F side=front http://127.0.0.1:8000/api/crop \
             | jq -e '.face_found == true' > /dev/null
           docker compose down -v
 

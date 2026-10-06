@@ -176,7 +176,7 @@ lives in [`docs/integration.md`](docs/integration.md).
 
 ```bash
 docker compose up
-curl http://localhost:8000/health
+curl http://localhost:8000/api/health
 ```
 
 **POST /analyze** submits a job (`multipart/form-data`): an `image`
@@ -200,7 +200,7 @@ upload cap, `503` + `Retry-After` when the queue is full or Redis is
 down. Accepted jobs return `202`:
 
 ```bash
-curl -F image=@id.jpg -F types=face,ocr localhost:8000/analyze
+curl -F image=@id.jpg -F types=face,ocr localhost:8000/api/analyze
 # {"job_id": "<uuid>", "status": "queued", "status_url": "/jobs/<uuid>"}
 ```
 
@@ -291,7 +291,7 @@ crop plus quality checks (`document_found`, `aspect_ratio`,
 (`front` / `back` / `unknown`):
 
 ```bash
-curl -F image=@id.jpg localhost:8000/crop
+curl -F image=@id.jpg localhost:8000/api/crop
 # {"quad": [...], "crop_base64": "...", "width": 856, "height": 540,
 #  "side": "unknown", "face_found": true, "checks": {...},
 #  "verdict": "pass"}
@@ -317,7 +317,7 @@ service startup alongside the other engines and shows as `verify` in
 extra weights in every deployment's memory:
 
 ```bash
-curl -F image1=@id.jpg -F image2=@selfie.jpg localhost:8000/verify
+curl -F image1=@id.jpg -F image2=@selfie.jpg localhost:8000/api/verify
 # {"verified": true, "similarity": 0.71, "threshold": 0.4,
 #  "face1": {"bbox": [49, 91, 84, 116], "confidence": 0.82,
 #            "crop_base64": "/9j/4AAQ…", "alternatives": []},

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.3.1] - 2026-10-06
+
+### Fixed
+
+- Container healthchecks (Dockerfile, `docker-compose.yml`,
+  `docker-compose.dev.yml`) probe `/api/health`; they still hit the
+  pre-`/api` `/health` path and marked v0.3.0 containers unhealthy,
+  which timed out the release smoke test's `compose up --wait`.
+
 ## [0.3.0] - 2026-10-06
 
 ### Changed

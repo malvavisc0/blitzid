@@ -46,6 +46,10 @@ ocr = [
     "pydantic-ai",
     # Optional: Langfuse tracing of the LLM calls (env-gated).
     "langfuse",
+    # opentelemetry-api 1.44+ dropped the private `._events` module
+    # pydantic-ai 0.8.1 still imports; hold the 1.43 line until it
+    # catches up.
+    "opentelemetry-api<1.44",
 ]
 barcode = [
     # PDF417 decoding for AAMVA driver's-license payloads (also the

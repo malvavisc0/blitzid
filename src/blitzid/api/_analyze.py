@@ -52,7 +52,7 @@ class Engines:
     structured sections), and ``structured_lock`` the LLM reader. The
     FairFace, MiniFASNet, and ArcFace passes are plain onnxruntime
     sessions, which are thread-safe, so they run outside any lock, and
-    the zxing-cpp barcode decode builds a fresh reader per call.
+    the zxing-cpp barcode decode is a stateless per-call function.
     Fields are None when an engine is unavailable (missing ``ocr`` or
     ``barcode`` extra, missing weights, missing LLM configuration).
     """

@@ -18,7 +18,8 @@ Payload layout (AAMVA versions 02-14)::
 Subfile offsets are absolute from the first byte (the ``@``). Each
 subfile holds 3-character element IDs followed by their values, one
 per LF-separated line; the DL/ID/EN subfile carries the standard
-elements and jurisdiction ``Z..`` subfiles carry state-specific extras.
+elements (EN is the pre-2025 enhanced-license subfile) and
+jurisdiction ``Z..`` subfiles carry state-specific extras.
 
 Element semantics differ across editions, so each edition's tag map is
 pinned separately: versions 02-03 encode the given name in DCT (first
@@ -29,7 +30,8 @@ throughout. DAA is the full-name element only in the version-01
 keeps the value raw in ``extra_tags``. Date elements
 (DBB, DBD, DBA) are MMDDYYYY (U.S.) or CCYYMMDD (Canada) and normalize
 via :func:`blitzid._dates.parse_date`; DBC sex encodes 1=male,
-2=female, 9=unspecified.
+2=female, 9=unspecified, and any other code maps to unspecified with
+the raw code kept in ``extra_tags``.
 """
 
 from __future__ import annotations
@@ -74,13 +76,15 @@ class BarcodeRecord:
         birth_date: Date of birth (DBB).
         issue_date: Document issue date (DBD).
         expiry_date: Document expiration date (DBA).
-        sex: ``"M"``, ``"F"``, or ``"X"`` (DBC 1/2/9).
+        sex: ``"M"``, ``"F"``, or ``"X"`` (DBC 1/2/9); any other DBC
+            code maps to ``"X"`` with the raw code kept in
+            ``extra_tags``.
         license_number: Customer ID number (DAQ).
         height: Height with its unit, e.g. ``"069 in"`` (DAU), or None
             when absent.
         extra_tags: Raw values of every un-mapped element —
-            jurisdiction ``Z..`` extras and standard-but-unmapped
-            fields alike.
+            jurisdiction ``Z..`` extras, standard-but-unmapped fields,
+            and a non-standard DBC code alike.
         symbology: The decoded barcode symbology, stamped by the reader
             (``"PDF417"`` for the AAMVA payload), None for records
             built directly by the parser.
@@ -132,12 +136,18 @@ def _date_field(elements: Mapping[str, str], tag: str, label: str) -> date:
     return parsed
 
 
-def _sex(elements: Mapping[str, str]) -> str:
-    """Map the DBC sex code to M/F/X."""
+def _sex(elements: Mapping[str, str]) -> tuple[str, str | None]:
+    """Map the DBC sex code to M/F/X.
+
+    Returns ``(sex, raw)``: the mapped value and, for a non-standard
+    DBC code, that raw code to keep in ``extra_tags``. A non-standard
+    code maps to ``"X"`` (unspecified) instead of failing the record.
+    """
     raw = _field(elements, "DBC", "sex")
-    if raw not in _SEX:
-        raise BarcodeError(f"invalid sex (DBC): {raw!r}")
-    return _SEX[raw]
+    mapped = _SEX.get(raw)
+    if mapped is None:
+        return "X", raw
+    return mapped, None
 
 
 def _optional(elements: Mapping[str, str], tag: str) -> str | None:
@@ -177,14 +187,21 @@ def _parse_subfile(text: str, offset: int, length: int) -> Mapping[str, str]:
     return MappingProxyType(elements)
 
 
+def _is_designator(value: str) -> bool:
+    """Whether *value* is a two-letter ASCII subfile designator."""
+    return value.isascii() and value.isalpha() and value.isupper()
+
+
 def _parse_entry(text: str, index: int, directory_end: int) -> _Subfile:
     """Validate one subfile directory entry and its data region."""
     start = _HEADER_LEN + index * _ENTRY_LEN
     entry = text[start : start + _ENTRY_LEN]
     kind, offset, length = entry[0:2], entry[2:6], entry[6:10]
-    if not (_is_digits(offset) and _is_digits(length)):
+    if not (_is_designator(kind) and _is_digits(offset) and _is_digits(length)):
         raise BarcodeError(f"malformed subfile directory entry {index}")
     offset_i, length_i = int(offset), int(length)
+    if length_i < 3:
+        raise BarcodeError(f"invalid subfile {kind!r} length: {length_i}")
     if offset_i < directory_end:
         raise BarcodeError(f"subfile {kind!r} offset lies inside the header")
     if offset_i + length_i > len(text):
@@ -267,6 +284,9 @@ def _parse_aamva(text: str) -> BarcodeRecord:
     jurisdiction, version, jurisdiction_version, subfiles = _parse_header(text)
     primary, extra = _merge(subfiles, version)
     family_name, given_name, middle_name = _names(version, primary)
+    sex, raw_sex = _sex(primary)
+    if raw_sex is not None:
+        extra = MappingProxyType({**extra, "DBC": raw_sex})
     return BarcodeRecord(
         jurisdiction=jurisdiction,
         aamva_version=version,
@@ -277,7 +297,7 @@ def _parse_aamva(text: str) -> BarcodeRecord:
         birth_date=_date_field(primary, "DBB", "birth date"),
         issue_date=_date_field(primary, "DBD", "issue date"),
         expiry_date=_date_field(primary, "DBA", "expiry date"),
-        sex=_sex(primary),
+        sex=sex,
         license_number=_field(primary, "DAQ", "license number"),
         height=_optional(primary, "DAU"),
         extra_tags=extra,
@@ -330,6 +350,10 @@ class BarcodeReader:
     def read(self, image_input: ImageInput) -> BarcodeRecord:
         """Decode and parse the PDF417 barcode from an image.
 
+        Every decoded barcode is tried and the first payload that
+        parses as AAMVA wins, so one corrupt candidate beside a valid
+        code does not fail the read.
+
         Args:
             image_input: Path, NumPy array (BGR), or PIL Image.
 
@@ -339,18 +363,33 @@ class BarcodeReader:
         Raises:
             ImageError: If the image cannot be loaded or is invalid.
             BarcodeError: If the image decodes no barcode at all, no
-                decoded payload is an AAMVA payload, or the payload
-                fails validation.
+                decoded payload is an AAMVA payload, or every AAMVA
+                payload fails validation.
         """
         img = load_image(image_input, self.logger)
         barcodes = self._zxing.read_barcodes(img)
         if not barcodes:
             raise BarcodeError("no PDF417 barcode found in the image")
+        return self._first_record(barcodes)
+
+    def _first_record(self, barcodes: Any) -> BarcodeRecord:
+        """The first candidate barcode that parses as an AAMVA payload.
+
+        A candidate carrying the AAMVA header but failing validation
+        does not stop the scan of the remaining barcodes; when none
+        parses, the first such validation error is raised, or
+        :class:`BarcodeError` when no barcode carried the header.
+        """
+        error: BarcodeError | None = None
         for barcode in barcodes:
             text = barcode.bytes.decode("latin-1")
             if not text.startswith(_MAGIC):
                 continue
-            record = _parse_aamva(text)
+            try:
+                record = _parse_aamva(text)
+            except BarcodeError as e:
+                error = error or e
+                continue
             record = replace(record, symbology=str(barcode.format))
             self.logger.info(
                 "barcode read: version %s, jurisdiction %s",
@@ -358,6 +397,8 @@ class BarcodeReader:
                 record.jurisdiction,
             )
             return record
+        if error is not None:
+            raise error
         raise BarcodeError(
             "no AAMVA payload among the decoded barcodes "
             "(missing '@\\n\\x1e\\rANSI ' header)"

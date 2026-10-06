@@ -1,9 +1,10 @@
 """Tests for blitzid.reading.barcode — AAMVA PDF417 parsing and decoding.
 
-Parser tests are pure-function over synthetic payloads (no PII: every
-name, number, and date is invented). Decode tests round-trip synthetic
-payloads through zxing-cpp's PDF417 encoder/decoder and are skipped
-when the ``barcode`` extra is absent.
+Parser tests are pure-function over synthetic payloads plus the
+standard's own published sample (no PII: every name, number, and date
+is invented or the AAMVA fictitious specimen). Decode tests round-trip
+synthetic payloads through zxing-cpp's PDF417 encoder/decoder and are
+skipped when the ``barcode`` extra is absent.
 """
 
 from __future__ import annotations
@@ -19,6 +20,15 @@ from blitzid import BarcodeError, BarcodeReader, BlitzIDError
 from blitzid.reading.barcode import _parse_aamva, _record_dict
 
 _VERSIONS = tuple(f"{number:02d}" for number in range(2, 15))
+
+_AAMVA_2020_SAMPLE = (
+    "@\n\x1e\rANSI 636000100102DL00410278ZV03190008DLDAQT64235789\n"
+    "DCSSAMPLE\nDDEN\nDACMICHAEL\nDDFN\nDADJOHN\nDDGN\nDCUJR\nDCAD\n"
+    "DCBK\nDCDPH\nDBD06062019\nDBB06061986\nDBA12102024\nDBC1\n"
+    "DAU068 in\nDAYBRO\nDAG2300 WEST BROAD STREET\nDAIRICHMOND\nDAJVA\n"
+    "DAK232690000  \nDCF2424244747474786102204\nDCGUSA\nDCK123456789\n"
+    "DDAF\nDDB06062018\nDDC06062020\nDDD1\rZVZVA01\r"
+)
 
 
 def _assemble(
@@ -90,6 +100,17 @@ def _entry(text: str, index: int) -> tuple[str, int, int]:
     )
 
 
+def _on_canvas(*symbols: np.ndarray) -> np.ndarray:
+    """The encoded symbols side by side on one white canvas."""
+    height = max(symbol.shape[0] for symbol in symbols)
+    columns = []
+    for symbol in symbols:
+        column = np.full((height, symbol.shape[1]), 255, dtype=np.uint8)
+        column[: symbol.shape[0], : symbol.shape[1]] = symbol
+        columns.append(column)
+    return np.concatenate(columns, axis=1)
+
+
 class TestParseHeader:
     def test_rejects_missing_prefix(self) -> None:
         with pytest.raises(BarcodeError, match="not an AAMVA payload"):
@@ -152,6 +173,16 @@ class TestParseHeader:
         payload = _payload("08")
         with pytest.raises(BarcodeError, match="lies inside the header"):
             _parse_aamva(payload[:23] + "0000" + payload[27:])
+
+    def test_rejects_zero_length_subfile(self) -> None:
+        payload = _payload("08")
+        with pytest.raises(BarcodeError, match=r"invalid subfile 'DL' length: 0"):
+            _parse_aamva(payload[:27] + "0000" + payload[31:])
+
+    def test_rejects_non_letter_designator(self) -> None:
+        payload = _payload("08")
+        with pytest.raises(BarcodeError, match="malformed subfile directory entry"):
+            _parse_aamva(payload[:21] + "1A" + payload[23:])
 
     def test_rejects_subfile_past_payload(self) -> None:
         payload = _payload("08")
@@ -290,6 +321,31 @@ class TestParseRecord:
             assert record.sex == expected
 
 
+class TestPublishedSample:
+    def test_parses_the_aamva_2020_sample_payload(self) -> None:
+        """The DL/ID 2020 CDS Annex D sample credential (fictitious).
+
+        A published byte stream, independent of the payload generator,
+        so the tag map is checked against the standard's own example.
+        """
+        record = _parse_aamva(_AAMVA_2020_SAMPLE)
+        assert record.jurisdiction == "636000"
+        assert record.aamva_version == "10"
+        assert record.jurisdiction_version == "01"
+        assert record.family_name == "SAMPLE"
+        assert record.given_name == "MICHAEL"
+        assert record.middle_name == "JOHN"
+        assert record.birth_date == date(1986, 6, 6)
+        assert record.issue_date == date(2019, 6, 6)
+        assert record.expiry_date == date(2024, 12, 10)
+        assert record.sex == "M"
+        assert record.license_number == "T64235789"
+        assert record.height == "068 in"
+        assert record.extra_tags["DCU"] == "JR"
+        assert record.extra_tags["DDF"] == "N"
+        assert record.extra_tags["ZVA"] == "01"
+
+
 class TestSectionBody:
     def test_record_dict_serializes_a_parsed_record(self) -> None:
         body = _record_dict(_parse_aamva(_payload("10")))
@@ -326,9 +382,15 @@ class TestParseValidation:
         with pytest.raises(BarcodeError, match="not a real date"):
             _parse_aamva(_payload("08", elements=elements))
 
-    def test_invalid_sex(self) -> None:
+    def test_nonstandard_sex_maps_to_unspecified(self) -> None:
         elements = _elements("08", sex="3")
-        with pytest.raises(BarcodeError, match="invalid sex"):
+        record = _parse_aamva(_payload("08", elements=elements))
+        assert record.sex == "X"
+        assert record.extra_tags["DBC"] == "3"
+
+    def test_missing_sex(self) -> None:
+        elements = [tag for tag in _elements("08") if tag[0] != "DBC"]
+        with pytest.raises(BarcodeError, match="missing sex"):
             _parse_aamva(_payload("08", elements=elements))
 
     def test_missing_license_number(self) -> None:
@@ -381,6 +443,26 @@ class TestDecodeRoundTrip:
         reader = BarcodeReader(log_level=logging.WARNING)
         record = reader.read(Image.fromarray(self._encode(_payload("10"))))
         assert record.aamva_version == "10"
+
+    def test_accepts_a_three_channel_array(self) -> None:
+        pytest.importorskip("zxingcpp")
+        reader = BarcodeReader(log_level=logging.WARNING)
+        gray = self._encode(_payload("08"))
+        record = reader.read(np.repeat(gray[:, :, None], 3, axis=2))
+        assert record.aamva_version == "08"
+
+    def test_falls_back_past_a_corrupt_candidate(self) -> None:
+        pytest.importorskip("zxingcpp")
+        reader = BarcodeReader(log_level=logging.WARNING)
+        canvas = _on_canvas(self._encode(_payload("15")), self._encode(_payload("08")))
+        record = reader.read(canvas)
+        assert record.aamva_version == "08"
+
+    def test_raises_the_candidate_error_when_nothing_parses(self) -> None:
+        pytest.importorskip("zxingcpp")
+        reader = BarcodeReader(log_level=logging.WARNING)
+        with pytest.raises(BarcodeError, match="unsupported AAMVA version"):
+            reader.read(self._encode(_payload("15")))
 
     def test_no_barcode_raises(self) -> None:
         pytest.importorskip("zxingcpp")

@@ -4,7 +4,7 @@
 You are talking to seniors. Be terse — no preamble, no recap, no
 hand-holding, no "here's what I did" summaries. State results, not
 intentions. Skip explanations unless explicitly asked. Never narrate
-tool use. Answer the question; move on.
+tool use. Answer the question; move on. Talk as a human-being.
 
 ## Project
 blitzid — modular DNN-based ID document reading framework, optimized

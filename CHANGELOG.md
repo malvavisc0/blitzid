@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-06
+
+### Fixed
+
+- `BarcodeReader.read` failed the whole read on the first
+  AAMVA-looking barcode in the image: a corrupt or truncated
+  candidate next to a valid PDF417 raised `BarcodeError` instead of
+  falling through. Every decoded barcode is now tried and the first
+  payload that parses wins; a candidate's validation error is only
+  raised when nothing else parses.
+- A non-standard `DBC` sex code (anything outside 1/2/9) aborted the
+  whole record. It now maps to `X` (unspecified) with the raw code
+  preserved in `extra_tags`; a missing `DBC` is still a hard error.
+- Subfile directory entries with a zero-length region passed
+  validation through an off-by-one on the segment-terminator check,
+  and non-letter designators were accepted. Lengths below the
+  designator + terminator minimum and non-letter designators are now
+  rejected.
+
 ## [0.3.3] - 2026-10-06
 
 ### Fixed

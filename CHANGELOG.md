@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-06
+
+### Fixed
+
+- The `structured` engine failed to build in the v0.3.2 image (and
+  any fresh install of the `ocr` extra): `opentelemetry-api` 1.44+
+  removed the private `._events` module that `pydantic-ai` 0.8.1 still
+  imports, so `import pydantic_ai` raised `ModuleNotFoundError` and
+  `/health` reported `structured: false` even with `BLITZID_LLM_*`
+  configured. `opentelemetry-api` is now pinned `<1.44` in the `ocr`
+  extra until pydantic-ai catches up.
+
 ## [0.3.2] - 2026-10-06
 
 ### Added

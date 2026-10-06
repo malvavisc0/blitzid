@@ -6,8 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Read identity documents from images: find and compare faces, read printed
-text, and parse the machine-readable zone, in one typed Python library
-that runs on an ordinary CPU.
+text, parse the machine-readable zone, and decode the PDF417 barcode on
+US and Canadian driver's licenses, in one typed Python library that
+runs on an ordinary CPU.
 
 No GPU and no CUDA stack: inference runs on onnxruntime's CPU provider,
 face detection takes about 4 ms per image on a laptop, and the weights
@@ -19,9 +20,10 @@ results in RAM only.
 
 ## Why blitzid
 
-- **One install, one API.** Face detection, OCR, MRZ parsing, and
-  document crop/QC behind a single typed surface, instead of stitching
-  a detector, an OCR engine, and your own MRZ code together.
+- **One install, one API.** Face detection, OCR, MRZ parsing, PDF417
+  barcode reading, and document crop/QC behind a single typed surface,
+  instead of stitching a detector, an OCR engine, and your own MRZ code
+  together.
 - **Validation over guessing.** Every MRZ field is gated by ICAO 9303
   check digits. Obvious OCR confusions (0/O, 1/I, …) are undone by
   each field's alphabet before validation, and a zone that still does
@@ -44,6 +46,7 @@ results in RAM only.
 ```bash
 pip install blitzid           # or: uv add blitzid
 pip install blitzid[ocr]      # with OCR text reading (RapidOCR)
+pip install blitzid[barcode]  # with PDF417/AAMVA barcode reading (zxing-cpp)
 pip install blitzid[api]      # with the HTTP API server
 ```
 
@@ -133,6 +136,15 @@ nationality), and parses TD1 (3x30), TD2 (2x36), and TD3 (2x44) into an
 convention (overflow at the start of `optional_data1`, no printed check
 digit).
 
+**PDF417 barcode reading.** `BarcodeReader` (the `barcode` extra,
+zxing-cpp) decodes the PDF417 code on the back of US and Canadian
+driver's licenses and parses the AAMVA DL/ID payload into a typed
+`BarcodeRecord` — jurisdiction, AAMVA version, names, dates, sex, and
+license number, plus the raw jurisdiction-specific extras. The header's
+subfile offsets, lengths, and number-of-entries count are validated and
+the mandatory fields are gated, so a malformed payload raises
+`BarcodeError` naming the offending field.
+
 **Structured extraction.** `StructuredOCRReader` (same extra) feeds the
 OCR lines to an OpenAI-compatible chat endpoint (e.g. a local vLLM
 server) and returns a typed `StructuredOCR` record; fields the model
@@ -155,8 +167,8 @@ face). Returns the crop plus a `QualityReport` verdict.
 
 **HTTP API and Docker.** The `api` extra adds a FastAPI service: an
 async job queue (Redis, persistence disabled) for
-face/attributes/antispoof/OCR/MRZ/structured/consistency, synchronous
-`/crop` (document QC), `/verify` (1:1 face comparison), and
+face/attributes/antispoof/OCR/MRZ/barcode/structured/consistency,
+synchronous `/crop` (document QC), `/verify` (1:1 face comparison), and
 `/liveness` (challenge-response liveness), and `/health` for
 orchestration.
 `docker compose up` runs it with all weights baked in.
@@ -183,9 +195,10 @@ curl http://localhost:8000/api/health
 file (any OpenCV-decodable format; PDFs get a precise `415`) and
 `types` (repeated and/or comma-separated: `face`, `attributes`,
 `antispoof`, `ocr`,
-`mrz`, `structured`, `consistency` — `attributes` predicts age group,
-gender, and race per face, `antispoof` scores live vs printed vs
-screen photos, `structured` rebuilds the OCR text into a
+`mrz`, `barcode`, `structured`, `consistency` — `attributes` predicts
+age group, gender, and race per face, `antispoof` scores live vs
+printed vs screen photos, `barcode` decodes the PDF417/AAMVA payload
+from a driver's-license back, `structured` rebuilds the OCR text into a
 typed record via the LLM, and `consistency` cross-checks that printed
 record against the machine-readable zone and the portrait's age band
 and gender against the birth date and sex; the photo rows need the
@@ -193,8 +206,8 @@ and gender against the birth date and sex; the photo rows need the
 `BLITZID_LLM_*` config).
 Validation is eager, before the job exists: `422` unknown type or
 missing fields, `400` undecodable bytes or an analysis whose engine is
-unavailable (`ocr`/`mrz` without the `ocr` extra, `structured`/
-`consistency` without
+unavailable (`ocr`/`mrz` without the `ocr` extra, `barcode` without the
+`barcode` extra, `structured`/`consistency` without
 the extra or the LLM config), `413` above the
 upload cap, `503` + `Retry-After` when the queue is full or Redis is
 down. Accepted jobs return `202`:
@@ -207,7 +220,7 @@ curl -F image=@id.jpg -F types=face,ocr localhost:8000/api/analyze
 **GET /jobs/{job_id}** polls: `{"status": "queued"}` / `running`; done
 returns `200` with one section per requested type (`face`,
 `attributes`, `antispoof`, `ocr`,
-`mrz`, `structured`, `consistency`; a failing section carries
+`mrz`, `barcode`, `structured`, `consistency`; a failing section carries
 `{"error": ...}` while
 the others still return). The read claims the result, so every later
 read gets `410 Gone`; unknown ids get `404` (an expired job reads `410` until
@@ -280,6 +293,30 @@ What a done result looks like on the specimen ID (abbreviated):
     "consistent": true,
     "processing_time_ms": 4871.0
   }
+}
+```
+
+On a US driver's-license back, a `barcode` section looks like this:
+
+```json
+{
+  "record": {
+    "jurisdiction": "636014",
+    "aamva_version": "08",
+    "jurisdiction_version": "00",
+    "family_name": "PUBLIC",
+    "given_name": "JOHN",
+    "middle_name": "QUINCY",
+    "birth_date": "1989-01-24",
+    "issue_date": "2013-06-04",
+    "expiry_date": "2035-01-31",
+    "sex": "M",
+    "license_number": "D12345678",
+    "height": "069 in",
+    "extra_tags": {"ZCB": "…"},
+    "symbology": "PDF417"
+  },
+  "processing_time_ms": 87.2
 }
 ```
 
@@ -530,6 +567,37 @@ record = MRZReader().read("id_card.jpg")
 print(record.mrz_type, record.document_number, record.surname)
 ```
 
+### `BarcodeReader`
+
+Defined in [`reading/barcode.py`](src/blitzid/reading/barcode.py);
+requires the `barcode` extra (`pip install blitzid[barcode]`). Decodes
+the PDF417 code on the back of US and Canadian driver's licenses with
+zxing-cpp and parses the AAMVA DL/ID payload (versions 02–14). The
+header's subfile offsets, lengths, and number-of-entries count are
+validated, the mandatory fields are gated, and a failing payload raises
+`BarcodeError` naming the offending field — nothing is invented or
+repaired.
+
+| Method | Description |
+|---|---|
+| `read(image_input)` | Decodes and returns a `BarcodeRecord` |
+
+**`BarcodeRecord`** — frozen dataclass: `jurisdiction` (the issuer's
+identification number), `aamva_version` (AAMVA version, `"02"`–`"14"`),
+`jurisdiction_version`, `family_name`, `given_name`, `middle_name`,
+`birth_date` / `issue_date` / `expiry_date` (`datetime.date`), `sex`
+(`"M"`/`"F"`/`"X"`), `license_number`, `height` (with its unit, or
+None), `extra_tags` (every un-mapped element kept raw, jurisdiction
+`Z..` extras included), and `symbology` (the decoded barcode symbology,
+stamped by the reader).
+
+```python
+from blitzid import BarcodeReader
+
+record = BarcodeReader().read("license_back.jpg")
+print(record.aamva_version, record.family_name, record.expiry_date)
+```
+
 ### `StructuredOCRReader`
 
 Defined in [`reading/structurize.py`](src/blitzid/reading/structurize.py);
@@ -595,6 +663,7 @@ Defined in [`exceptions.py`](src/blitzid/exceptions.py).
 | `ModelError` | Model download or load failure |
 | `ImageError` | Image loading, validation, or processing failure |
 | `MRZError` | MRZ not found, malformed, or failed check-digit validation |
+| `BarcodeError` | PDF417 barcode not found, malformed, or failed AAMVA validation |
 | `FaceVerificationError` | Face verification failure (no detectable face, missing landmarks) |
 
 Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `ImageLoadError`, etc.) are re-exported from `__init__.py`.

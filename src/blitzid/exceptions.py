@@ -17,5 +17,9 @@ class MRZError(BlitzIDError):
     """MRZ not found, malformed, or failed check-digit validation."""
 
 
+class BarcodeError(BlitzIDError):
+    """PDF417 barcode not found, malformed, or failed AAMVA validation."""
+
+
 class FaceVerificationError(BlitzIDError):
     """Face verification failure (no detectable face, missing landmarks)."""

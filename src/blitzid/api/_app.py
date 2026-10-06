@@ -24,9 +24,10 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Annotated, Any
 
 import numpy as np
@@ -61,13 +62,23 @@ from blitzid.face._face import Face
 from blitzid.face._motion import verify_action
 from blitzid.face.detector import FaceDetectorDNN
 from blitzid.face.verifier import FaceVerifier
+from blitzid.reading.barcode import BarcodeReader
 from blitzid.reading.document import DocumentCropper
 from blitzid.reading.mrz import MRZReader
 from blitzid.reading.ocr import RapidOCRReader
 from blitzid.reading.structurize import StructuredOCRReader
 
 _ANALYSIS_TYPES = frozenset(
-    {"face", "attributes", "antispoof", "ocr", "mrz", "structured", "consistency"}
+    {
+        "face",
+        "attributes",
+        "antispoof",
+        "ocr",
+        "mrz",
+        "barcode",
+        "structured",
+        "consistency",
+    }
 )
 _CHALLENGE_TTL = 120.0
 _SIDES = frozenset({"front", "back", "unknown"})
@@ -140,6 +151,11 @@ def _build_engines() -> Engines:
         mrz_reader = MRZReader(reader=ocr_reader, log_level=logging.WARNING)
     except BlitzIDError as e:
         _LOG.warning("ocr/mrz engines unavailable: %s", e)
+    barcode_reader = None
+    try:
+        barcode_reader = BarcodeReader(log_level=logging.WARNING)
+    except BlitzIDError as e:
+        _LOG.warning("barcode engine unavailable: %s", e)
     structured_reader = None
     try:
         importlib.import_module("pydantic_ai")
@@ -150,6 +166,7 @@ def _build_engines() -> Engines:
         detector=detector,
         ocr_reader=ocr_reader,
         mrz_reader=mrz_reader,
+        barcode_reader=barcode_reader,
         verifier=verifier,
         structured_reader=structured_reader,
         attribute_reader=attribute_reader,
@@ -352,7 +369,8 @@ def _parse_types(values: list[str]) -> list[str]:
         raise HTTPException(
             422,
             "at least one analysis type is required: "
-            "face, attributes, antispoof, ocr, mrz, structured, consistency",
+            "face, attributes, antispoof, ocr, mrz, barcode, structured, "
+            "consistency",
         )
     unknown = sorted(set(types) - _ANALYSIS_TYPES)
     if unknown:
@@ -422,23 +440,27 @@ def _face_evidence(img: np.ndarray, selected: Face, faces: list[Face]) -> Compar
 
 def _engine_missing(analysis_type: str, engines: Engines) -> bool:
     """Whether the engine for one analysis type is unavailable."""
-    if analysis_type == "face":
-        return engines.detector is None
-    if analysis_type == "attributes":
-        return engines.attribute_reader is None
-    if analysis_type == "antispoof":
-        return engines.antispoof_reader is None
-    if analysis_type == "mrz":
-        return engines.mrz_reader is None
-    if analysis_type == "structured":
-        return engines.structured_reader is None or engines.ocr_reader is None
-    if analysis_type == "consistency":
-        return (
+    return _ENGINE_CHECKS[analysis_type](engines)
+
+
+_ENGINE_CHECKS: Mapping[str, Callable[[Engines], bool]] = MappingProxyType(
+    {
+        "face": lambda engines: engines.detector is None,
+        "attributes": lambda engines: engines.attribute_reader is None,
+        "antispoof": lambda engines: engines.antispoof_reader is None,
+        "ocr": lambda engines: engines.ocr_reader is None,
+        "mrz": lambda engines: engines.mrz_reader is None,
+        "barcode": lambda engines: engines.barcode_reader is None,
+        "structured": lambda engines: (
+            engines.structured_reader is None or engines.ocr_reader is None
+        ),
+        "consistency": lambda engines: (
             engines.mrz_reader is None
             or engines.structured_reader is None
             or engines.ocr_reader is None
-        )
-    return engines.ocr_reader is None
+        ),
+    }
+)
 
 
 def _ensure_engines(types: list[str], engines: Engines) -> None:
@@ -450,7 +472,8 @@ def _ensure_engines(types: list[str], engines: Engines) -> None:
         raise HTTPException(
             400,
             f"analysis engine(s) unavailable: {', '.join(unavailable)}; "
-            "ocr/mrz need the blitzid[ocr] extra, face/attributes/antispoof "
+            "ocr/mrz need the blitzid[ocr] extra, barcode the blitzid[barcode] "
+            "extra, face/attributes/antispoof "
             "need the SCRFD weights (attributes also FairFace, antispoof also "
             "MiniFASNet), structured/consistency need the ocr extra and "
             "BLITZID_LLM_* config",
@@ -646,6 +669,7 @@ def _register_routes(app: FastAPI) -> None:
                 "antispoof": engines.antispoof_reader is not None,
                 "ocr": engines.ocr_reader is not None,
                 "mrz": engines.mrz_reader is not None,
+                "barcode": engines.barcode_reader is not None,
                 "structured": engines.structured_reader is not None,
             },
             redis=redis_ok,

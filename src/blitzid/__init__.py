@@ -15,6 +15,9 @@ Public API
 - ``OCRText`` — recognized text line (bbox, text, confidence).
 - ``MRZReader`` — the ICAO 9303 machine-readable zone reader (``ocr`` extra).
 - ``MRZRecord`` — parsed MRZ fields.
+- ``BarcodeReader`` — the AAMVA PDF417 driver's-license reader
+  (``barcode`` extra).
+- ``BarcodeRecord`` — parsed AAMVA payload fields.
 - ``StructuredOCRReader`` — LLM-backed structured output from OCR lines
   (``ocr`` extra).
 - ``StructuredOCR``, ``ExtractedField`` — structured-output schemas.
@@ -25,10 +28,11 @@ Public API
 - ``DocumentCropper`` — document localization, perspective crop, and QC.
 - ``QualityReport`` — document crop quality-check verdict.
 - ``BlitzIDError``, ``ModelError``, ``ImageError``, ``MRZError``,
-  ``FaceVerificationError`` — exception hierarchy.
+  ``BarcodeError``, ``FaceVerificationError`` — exception hierarchy.
 """
 
 from blitzid.exceptions import (
+    BarcodeError,
     BlitzIDError,
     FaceVerificationError,
     ImageError,
@@ -40,6 +44,7 @@ from blitzid.face._attributes import FaceAttributeReader, FaceAttributes
 from blitzid.face._face import DetectionMetrics, Face, VerificationResult
 from blitzid.face.detector import FaceDetectorDNN
 from blitzid.face.verifier import FaceVerifier
+from blitzid.reading.barcode import BarcodeReader, BarcodeRecord
 from blitzid.reading.consistency import (
     ConsistencyReport,
     FieldComparison,
@@ -64,6 +69,9 @@ InvalidParameterError = BlitzIDError
 __all__ = [
     "AntiSpoofReader",
     "AntiSpoofResult",
+    "BarcodeError",
+    "BarcodeReader",
+    "BarcodeRecord",
     "BlitzIDError",
     "ConsistencyReport",
     "DetectionMetrics",

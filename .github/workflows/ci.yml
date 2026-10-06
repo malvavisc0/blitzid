@@ -27,5 +27,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --extra dev
+      # The barcode extra enables the zxing-cpp round-trip tier;
+      # without it those tests skip, not fail.
+      - run: uv sync --extra dev --extra barcode
       - run: uv run pytest tests/ -v

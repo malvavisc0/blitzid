@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-06
+
+### Added
+
+- PDF417 barcode reading for US and Canadian driver's licenses
+  (`blitzid[barcode]` extra, zxing-cpp): `BarcodeReader` /
+  `BarcodeRecord` / `BarcodeError` decode the back-of-card PDF417 and
+  parse the AAMVA DL/ID payload (versions 02–14). The parser validates
+  the header's subfile offsets, lengths, and number-of-entries count,
+  gates the mandatory fields with per-edition tag maps pinned by
+  fixture tests, and keeps every un-mapped tag raw in `extra_tags`.
+  The HTTP API gains a `barcode` analysis type and a `/health` flag;
+  a missing `barcode` extra degrades to the per-engine `400`.
+
 ## [0.3.1] - 2026-10-06
 
 ### Fixed

@@ -12,6 +12,7 @@ against a local stack.
 
 The service quality-checks document photos, reads the printed text and
 the machine-readable code strip, validates the strip's check digits,
+decodes the PDF417 barcode on US and Canadian driver's-license backs,
 compares a selfie to a document portrait, estimates age group, gender,
 and race per face, and cross-checks the copies inside one document.
 
@@ -60,17 +61,18 @@ would trust with that.
 
 ### Check it is healthy
 
-`GET /health` returns `200` with seven model flags: `face`, `verify`,
-`attributes`, `antispoof`, `ocr`, `mrz`, `structured`. A `false` flag
-means that analysis returns `400` with the missing piece named. `503`
-means the job store is down and the container cannot accept work.
+`GET /health` returns `200` with eight model flags: `face`, `verify`,
+`attributes`, `antispoof`, `ocr`, `mrz`, `barcode`, `structured`. A
+`false` flag means that analysis returns `400` with the missing piece
+named. `503` means the job store is down and the container cannot
+accept work.
 
 ## The blocks
 
 | Block | Call | Gives you |
 |---|---|---|
 | Photo quality gate | `POST /crop` | `pass`/`warn`/`reject` verdict, per-check detail, and a corrected crop. Works on documents and selfies alike |
-| Data extraction | `POST /analyze -F types=ocr,mrz,structured` | printed fields, code-strip fields (check digits validated), typed records |
+| Data extraction | `POST /analyze -F types=ocr,mrz,barcode,structured` | printed fields, code-strip fields (check digits validated), the PDF417/AAMVA record from a license back, typed records |
 | Age signal | `POST /analyze -F types=attributes` | age band, gender, and race per face |
 | Spoof signal | `POST /analyze -F types=antispoof` | per-face scores: live, printed photo, screen photo |
 | Document self-check | `POST /analyze -F types=consistency` | printed text vs code strip vs portrait, per-field verdicts |
@@ -119,8 +121,9 @@ One document, both sides where the card has a back:
 - **Passport**: one photo, the data page. The code strip is at the
   bottom of the same page.
 - **ID card**: front and back. The back carries the code strip.
-- **Driver license**: front and back. The back carries the barcode
-  (see the gap list at the end).
+- **Driver license**: front and back. The back carries the PDF417
+  barcode with the AAMVA record (a machine copy of the printed data,
+  validated by the `barcode` analysis).
 
 Capture paths depend on what the user must prove. "Selfie, then ID
 front and back" is the base. "Selfie, then passport" is the same flow
@@ -163,7 +166,8 @@ Pick types per document:
 | Passport data page | `face,ocr,mrz,structured,consistency` |
 | ID card (back photographed) | `face,ocr,mrz,structured,consistency` |
 | ID card (front only) | `face,ocr,structured` (no code strip to read) |
-| Driver license | `face,ocr,structured,attributes` |
+| Driver license (back photographed) | `face,ocr,mrz,barcode,structured,consistency` |
+| Driver license (front only) | `face,ocr,structured,attributes` (no barcode or MRZ on the front) |
 | Vehicle registration / insurance | `ocr,structured` |
 | Plate photo | `structured` |
 
@@ -272,10 +276,11 @@ the two crops, not a boolean.
 
 Read this before you promise a flow:
 
-- **Barcode (PDF417/AAMVA) on US and Canadian licenses.** The back of
-  those cards carries a machine copy with its own checksums, better
-  than any OCR. Today the `ocr` and `structured` passes read the
-  printed front only.
+- **Barcode-vs-print cross-check.** The `barcode` analysis decodes the
+  PDF417/AAMVA record on US and Canadian license backs, but the
+  `consistency` section does not compare it against the printed front
+  yet — the strongest tamper signal those cards have. It compares the
+  code strip (when the card has one) today.
 - **Video replay and generated faces.** The liveness block stops
   static spoofs and the `antispoof` block flags cameras pointed at
   photos and displays. Filming a screen that plays a live video, or a

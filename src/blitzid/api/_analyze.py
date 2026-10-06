@@ -26,6 +26,7 @@ from blitzid.face._attributes import FaceAttributeReader, FaceAttributes
 from blitzid.face._face import Face
 from blitzid.face.detector import FaceDetectorDNN
 from blitzid.face.verifier import FaceVerifier
+from blitzid.reading.barcode import BarcodeReader, BarcodeRecord, _record_dict
 from blitzid.reading.consistency import cross_check
 from blitzid.reading.mrz import MRZReader, MRZRecord
 from blitzid.reading.ocr import OCRText, RapidOCRReader
@@ -50,14 +51,16 @@ class Engines:
     pipeline (its one text pass per job feeds the OCR, MRZ, and
     structured sections), and ``structured_lock`` the LLM reader. The
     FairFace, MiniFASNet, and ArcFace passes are plain onnxruntime
-    sessions, which are thread-safe, so they run outside any lock.
-    Fields are None when an engine is unavailable (missing ``ocr``
-    extra, missing weights, missing LLM configuration).
+    sessions, which are thread-safe, so they run outside any lock, and
+    the zxing-cpp barcode decode builds a fresh reader per call.
+    Fields are None when an engine is unavailable (missing ``ocr`` or
+    ``barcode`` extra, missing weights, missing LLM configuration).
     """
 
     detector: FaceDetectorDNN | None
     ocr_reader: RapidOCRReader | None
     mrz_reader: MRZReader | None
+    barcode_reader: BarcodeReader | None = None
     verifier: FaceVerifier | None = None
     structured_reader: StructuredOCRReader | None = None
     attribute_reader: FaceAttributeReader | None = None
@@ -191,6 +194,20 @@ def _read_mrz(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> MRZRec
     return _memoized(memo, "mrz", _load)
 
 
+def _read_barcode(
+    img: np.ndarray, engines: Engines, memo: dict[str, Any]
+) -> BarcodeRecord:
+    """Decode and parse the PDF417 barcode (shared between sections)."""
+    reader = engines.barcode_reader
+    if reader is None:
+        raise ModelError("barcode analysis requires the blitzid[barcode] extra")
+
+    def _load() -> BarcodeRecord:
+        return reader.read(img)
+
+    return _memoized(memo, "barcode", _load)
+
+
 def _read_structured(
     img: np.ndarray, engines: Engines, memo: dict[str, Any]
 ) -> StructuredOCR:
@@ -265,6 +282,13 @@ def _run_mrz(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> dict[st
     return {"record": asdict(_read_mrz(img, engines, memo))}
 
 
+def _run_barcode(
+    img: np.ndarray, engines: Engines, memo: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the barcode section."""
+    return {"record": _record_dict(_read_barcode(img, engines, memo))}
+
+
 def _run_structured(
     img: np.ndarray, engines: Engines, memo: dict[str, Any]
 ) -> dict[str, Any]:
@@ -307,6 +331,7 @@ _SECTION_RUNNERS: Mapping[
         "antispoof": _run_antispoof,
         "ocr": _run_ocr,
         "mrz": _run_mrz,
+        "barcode": _run_barcode,
         "structured": _run_structured,
         "consistency": _run_consistency,
     }

@@ -15,8 +15,10 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from threading import Barrier, Event, Thread
+from types import MappingProxyType
 from typing import Any
 
 import cv2
@@ -25,6 +27,8 @@ import pytest
 
 from blitzid import (
     AntiSpoofResult,
+    BarcodeError,
+    BarcodeRecord,
     ExtractedField,
     Face,
     FaceAttributes,
@@ -228,6 +232,20 @@ class _StubMRZReader:
         return self._record
 
 
+class _StubBarcodeReader:
+    """BarcodeReader stand-in returning a fixed record or error."""
+
+    def __init__(self, record: BarcodeRecord | Exception) -> None:
+        self._record = record
+        self.calls = 0
+
+    def read(self, image_input: Any) -> BarcodeRecord:
+        self.calls += 1
+        if isinstance(self._record, Exception):
+            raise self._record
+        return self._record
+
+
 class _StubAttributeReader:
     """FaceAttributeReader stand-in returning a fixed result or error."""
 
@@ -334,6 +352,25 @@ def _mrz_record() -> MRZRecord:
     )
 
 
+def _barcode_record() -> BarcodeRecord:
+    return BarcodeRecord(
+        jurisdiction="636014",
+        aamva_version="08",
+        jurisdiction_version="00",
+        family_name="PUBLIC",
+        given_name="JOHN",
+        middle_name="QUINCY",
+        birth_date=date(1989, 1, 24),
+        issue_date=date(2013, 6, 4),
+        expiry_date=date(2035, 1, 31),
+        sex="M",
+        license_number="D12345678",
+        height="069 in",
+        extra_tags=MappingProxyType({"ZCZ": "EXTRA"}),
+        symbology="PDF417",
+    )
+
+
 def _structured_record() -> StructuredOCR:
     return StructuredOCR(
         document_type="id",
@@ -410,6 +447,7 @@ def _stub_engines(
     faces: list[Any] | Exception | None = None,
     ocr_texts: list[OCRText] | Exception | None = None,
     mrz: MRZRecord | Exception | None = None,
+    barcode: BarcodeRecord | Exception | None = None,
     verification: VerificationResult | Exception | None = None,
     structured: StructuredOCR | Exception | None = None,
     attributes: list[Any] | Exception | None = None,
@@ -419,6 +457,9 @@ def _stub_engines(
         detector=_StubDetector([_face()] if faces is None else faces),
         ocr_reader=_StubOCRReader([_ocr_text()] if ocr_texts is None else ocr_texts),
         mrz_reader=_StubMRZReader(_mrz_record() if mrz is None else mrz),
+        barcode_reader=_StubBarcodeReader(
+            _barcode_record() if barcode is None else barcode
+        ),
         verifier=_StubVerifier(
             _verification() if verification is None else verification
         ),
@@ -823,6 +864,7 @@ class TestHealth:
                 "antispoof": True,
                 "ocr": True,
                 "mrz": True,
+                "barcode": True,
                 "structured": True,
             }
             assert body["redis"] is True
@@ -843,6 +885,7 @@ class TestHealth:
                 "antispoof": False,
                 "ocr": False,
                 "mrz": False,
+                "barcode": False,
                 "structured": False,
             }
 
@@ -1045,6 +1088,42 @@ class TestStructuredJob:
             assert _submit(client, types="structured").status_code == 400
 
 
+class TestBarcodeJob:
+    def test_barcode_section_returns_record(self) -> None:
+        engines = _stub_engines()
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="barcode")
+            assert response.status_code == 202
+            body = _poll_done(client, response.json()["job_id"])
+        record = body["barcode"]["record"]
+        assert record["jurisdiction"] == "636014"
+        assert record["aamva_version"] == "08"
+        assert record["family_name"] == "PUBLIC"
+        assert record["birth_date"] == "1989-01-24"
+        assert record["sex"] == "M"
+        assert record["symbology"] == "PDF417"
+        assert record["extra_tags"] == {"ZCZ": "EXTRA"}
+        assert "processing_time_ms" in body["barcode"]
+
+    def test_barcode_error_is_section_error(self) -> None:
+        engines = _stub_engines(barcode=BarcodeError("no PDF417 barcode found"))
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="barcode,face")
+            body = _poll_done(client, response.json()["job_id"])
+            assert body["barcode"]["error"] == "no PDF417 barcode found"
+            assert "faces" in body["face"]
+
+    def test_barcode_engine_unavailable_400(self) -> None:
+        engines = Engines(
+            detector=None,
+            ocr_reader=None,
+            mrz_reader=None,
+            barcode_reader=None,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            assert _submit(client, types="barcode").status_code == 400
+
+
 class TestLiveness:
     def test_challenge_issues_random_action(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1233,13 +1312,15 @@ class TestConsistencyJob:
         engines = _stub_engines(structured=_consistent_record())
         with _client(store=MemoryJobStore(), engines=engines) as client:
             response = _submit(
-                client, types="face,attributes,antispoof,ocr,mrz,structured,consistency"
+                client,
+                types="face,attributes,antispoof,ocr,mrz,barcode,structured,consistency",
             )
             body = _poll_done(client, response.json()["job_id"])
         assert body["status"] == "done"
         assert engines.detector.calls == 1
         assert engines.ocr_reader.calls == 1
         assert engines.mrz_reader.calls == 1
+        assert engines.barcode_reader.calls == 1
         assert engines.structured_reader.calls == 1
         assert engines.attribute_reader.calls == 1
         assert engines.antispoof_reader.calls == 1

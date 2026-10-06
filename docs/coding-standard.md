@@ -14,7 +14,8 @@ layers. Face detection (`src/blitzid/face/`): SCRFD-2.5G ONNX model
 an onnxruntime CPU session, with LRU result cache, multi-scale
 detection, NMS + size filtering, batch processing, and bbox
 visualization. Document reading (`src/blitzid/reading/`): RapidOCR
-text lines (`ocr` extra) and ICAO 9303 MRZ parsing (TD1/TD2/TD3).
+text lines (`ocr` extra), ICAO 9303 MRZ parsing (TD1/TD2/TD3), and
+AAMVA PDF417 driver's-license parsing (`barcode` extra).
 Inputs are file paths, NumPy arrays, or PIL Images; outputs are
 `(x, y, w, h, confidence)` tuples and crops.
 
@@ -22,9 +23,10 @@ Inputs are file paths, NumPy arrays, or PIL Images; outputs are
 - python 3.12+ (CI matrix: 3.12 / 3.13 / 3.14), uv, pyproject.toml
   (hatchling backend, src layout, `py.typed`)
 - core deps: numpy, onnxruntime (CPU), opencv-python-headless>=5,
-  platformdirs
-- optional extras: `scripts` (tqdm), `dev` (pytest, ruff, mypy,
-  pre-commit)
+  platformdirs, pydantic
+- optional extras: `ocr` (rapidocr, pydantic-ai, langfuse), `barcode`
+  (zxing-cpp), `api` (fastapi, uvicorn, redis), `scripts` (tqdm),
+  `dev` (pytest, ruff, mypy, pre-commit)
 - Type checker: **mypy** (`strict = true` in pyproject.toml)
 - Lint/format: **ruff** (line-length 88, target py312; E, W, F, I, UP,
   B, SIM, RUF)
@@ -125,7 +127,8 @@ Write the simplest correct solution. Delete anything that isn't needed.
   `src/blitzid/face/` (`detector.py` — `FaceDetectorDNN` plus NMS /
   IoU / size filter; `_face.py` — `Face`, `DetectionMetrics`, cache,
   drawing; `_scrfd.py` — SCRFD preprocess/decode). Document reading in
-  `src/blitzid/reading/` (`ocr.py`, `mrz.py`). Shared helpers at the
+  `src/blitzid/reading/` (`ocr.py`, `mrz.py`, `barcode.py`,
+  `structurize.py`, `consistency.py`, `document.py`). Shared helpers at the
   top level: `_image.py` (input loading and normalization), `_models.py`
   (`ModelManager` — SCRFD ONNX download + CPU
   `onnxruntime.InferenceSession`, default cache dir via `platformdirs`).
@@ -134,10 +137,12 @@ Write the simplest correct solution. Delete anything that isn't needed.
 - Exceptions in `src/blitzid/exceptions.py`: `BlitzIDError` base,
   `ModelError` (model download/load), `ImageError` (load/validate/
   process), `MRZError` (MRZ not found / malformed / failed check-digit
-  validation), `FaceVerificationError` (no face for verification).
-- Optional deps (PIL, rapidocr via the `ocr` extra) are lazy-imported
-  inside functions, guarded, with targeted `# type: ignore` codes; core
-  must work without them.
+  validation), `BarcodeError` (PDF417 not found / malformed / failed
+  AAMVA validation), `FaceVerificationError` (no face for
+  verification).
+- Optional deps (PIL, rapidocr via the `ocr` extra, zxing-cpp via the
+  `barcode` extra) are lazy-imported inside functions, guarded, with
+  targeted `# type: ignore` codes; core must work without them.
 - The MRZ layer (`src/blitzid/reading/mrz.py`) is pure ICAO 9303 logic
   over the OCR reader's text lines — no new models, no guessy repair:
   obvious OCR confusions (0/O, 1/I, 2/Z, 5/S, 6/G, 8/B) resolve
@@ -161,7 +166,12 @@ Write the simplest correct solution. Delete anything that isn't needed.
   surface is `RapidOCRReader.read()` returning `OCRText` records — one
   engine (RapidOCR on onnxruntime CPU), lazy-imported from the `ocr`
   extra. The MRZ surface is `MRZReader.read()` returning an
-  `MRZRecord` (same `ocr` extra).
+  `MRZRecord` (same `ocr` extra). The barcode surface is
+  `BarcodeReader.read()` returning a `BarcodeRecord` (`barcode`
+  extra, zxing-cpp decoder; the parser validates the AAMVA header's
+  subfile offsets/lengths/count, gates mandatory fields per
+  edition-pinned tag maps, keeps unknown tags raw in `extra_tags`,
+  and raises `BarcodeError` naming the offending field).
 - `scripts/` are demos, diagnostics, and dataset benchmarks — not part
   of the shipped package; they may use the `scripts` extra.
 - Tests go in `tests/`; validation tests must run without model

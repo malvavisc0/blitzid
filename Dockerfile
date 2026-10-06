@@ -6,10 +6,11 @@ COPY README.md pyproject.toml uv.lock ./
 COPY src/ src/
 COPY scripts/ scripts/
 # Every runtime feature ships in the image: the HTTP API (api), face
-# detection/verification in the core, OCR, MRZ, LLM-backed structured
-# extraction and Langfuse tracing (ocr), and the bundled scripts
-# (scripts). Only the dev toolchain stays out.
-RUN uv sync --frozen --no-dev --extra api --extra ocr --extra scripts
+# detection/verification in the core, OCR, MRZ, PDF417 barcode reading
+# (barcode), LLM-backed structured extraction and Langfuse tracing
+# (ocr), and the bundled scripts (scripts). Only the dev toolchain
+# stays out.
+RUN uv sync --frozen --no-dev --extra api --extra barcode --extra ocr --extra scripts
 # Bake every engine's weights (SCRFD, ArcFace, RapidOCR) so cold start
 # needs no downloads.
 RUN uv run --no-sync python scripts/download_models.py --models-dir /models

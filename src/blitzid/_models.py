@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -165,7 +164,7 @@ class ModelManager:
             self.logger.info(
                 "%s downloaded (%.1f KB)", path.name, path.stat().st_size / 1024
             )
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        except (OSError, ValueError) as e:
             tmp_path.unlink(missing_ok=True)
             raise ModelError(
                 f"Error downloading {path.name} from {url} "

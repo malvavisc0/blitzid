@@ -11,12 +11,13 @@ import numpy as np
 import pytest
 
 from blitzid import FaceAttributeReader, FaceAttributes
+from blitzid._image import crop_with_padding
 from blitzid.face._attributes import (
     AGE_GROUPS,
     ATTRIBUTE_INPUT_SIZE,
     GENDERS,
     RACES,
-    _crop_face,
+    _softmax,
     to_blob,
 )
 
@@ -38,9 +39,18 @@ class TestToBlob:
 
     def test_margin_crop_is_clamped_to_the_image(self) -> None:
         img = np.zeros((60, 80, 3), dtype=np.uint8)
-        crop = _crop_face(img, (70, 50, 20, 20))
+        crop = crop_with_padding(img, (70, 50, 20, 20), 0.25)
         assert crop.shape == (15, 15, 3)
-        assert _crop_face(img, (0, 0, 80, 60)).shape == (60, 80, 3)
+        assert crop_with_padding(img, (0, 0, 80, 60), 0.25).shape == (60, 80, 3)
+
+
+class TestSoftmax:
+    def test_large_logits_are_normalized_without_overflow(self) -> None:
+        scores = _softmax(np.array([1000.0, 1001.0, 1002.0], dtype=np.float32))
+        assert scores.dtype == np.float64
+        np.testing.assert_allclose(
+            scores, [0.09003057, 0.24472847, 0.66524096], rtol=1e-6
+        )
 
 
 class TestVocabulary:

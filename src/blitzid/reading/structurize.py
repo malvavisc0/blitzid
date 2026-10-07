@@ -31,6 +31,7 @@ Requires the ``ocr`` extra (``pip install blitzid[ocr]``).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Mapping, Sequence
@@ -59,6 +60,21 @@ DocumentType = Literal["id", "plate", "mrz", "unknown"]
 
 ReadKind = Literal["auto", "id", "plate", "mrz"]
 
+_MRZ_BOUNDARIES = (
+    "For a TD3 MRZ, skip the first 5 characters of line 1 before reading "
+    "the surname: 'P<UTODOE<<JANE' has document_code 'P<', issuer 'UTO', "
+    "surname 'DOE', and given_names 'JANE' (never 'UTODOE'). "
+    "Keep both document_code characters, including its '<' filler. "
+    "Read exactly the first 9 characters of line 2 as document_number; "
+    "the 10th is its check digit, not part of the number. The number may "
+    "end in a digit: 'L898902C36UTO' has document_number 'L898902C3' "
+    "(9 characters), check digit '6', and nationality 'UTO'. Never return "
+    "the 10-character 'L898902C36' as document_number. "
+    "MRZ expiry dates can be in the past: '120415' means '2012-04-15', "
+    "even on an expired document. Do not replace its year with today's "
+    "year or invent a future expiry. "
+)
+
 _PROMPTS: dict[str, str] = {
     "auto": (
         "Extract structured data from OCR text. Set document_type to exactly "
@@ -73,7 +89,10 @@ _PROMPTS: dict[str, str] = {
         "id fields: surname, given_names, date_of_birth, nationality, "
         "document_number, date_of_expiry, place_of_birth, sex — ignore '<' "
         "filler lines; dates may read DD.MM.YYYY or DD/MM/YYYY (DD.MM.YYYY "
-        "is day-first); document_number is the document serial; sex is M, "
+        "is day-first); document_number is the document serial, never the "
+        "CAN/card access number or a personal ID number. On a German "
+        "Personalausweis it is the 9-character alphanumeric serial near "
+        "the header, not the separate 6-digit access code. sex is M, "
         "F, or X. "
         "plate fields: plate_number, issuing_region — plate_number is "
         "letters and digits only, drop spaces and separators ('ABC-1234' "
@@ -88,13 +107,17 @@ _PROMPTS: dict[str, str] = {
         "YYMMDD (birth: most recent century not after today; expiry: always "
         "20YY); sex '<' means X; never emit check digits or optional/"
         "personal-number data. "
-    ),
+    )
+    + _MRZ_BOUNDARIES,
     "id": (
         "Extract person data from identity-document OCR (visual zone). "
         "Ignore machine-readable '<' filler lines. Return only recovered "
         "fields: surname, given_names, date_of_birth, nationality, "
         "document_number, date_of_expiry, place_of_birth, sex. "
-        "document_number is the document serial, not a personal ID number. "
+        "document_number is the document serial, not a personal ID number "
+        "or the CAN/card access number. On a German Personalausweis it is "
+        "the 9-character alphanumeric serial near the header, not the "
+        "separate 6-digit access code. "
         "sex is M, F, or X. Dates may read DD.MM.YYYY or DD/MM/YYYY "
         "(DD.MM.YYYY is day-first) — emit YYYY-MM-DD. "
     ),
@@ -125,7 +148,8 @@ _PROMPTS: dict[str, str] = {
         "document_number, nationality, surname, given_names, birth_date, "
         "sex, expiry_date. Never emit check digits or optional/"
         "personal-number data. "
-    ),
+    )
+    + _MRZ_BOUNDARIES,
 }
 
 
@@ -152,10 +176,6 @@ def _system_prompt(kind: str, today: date) -> str:
     return _PROMPTS[kind] + _common_rules(today)
 
 
-_DATE_FIELD_NAMES = frozenset(
-    {"date_of_birth", "date_of_expiry", "birth_date", "expiry_date"}
-)
-
 _ROW_GROUPING = 0.5
 
 
@@ -166,9 +186,7 @@ def _is_date_field(name: str) -> bool:
     …) and similarly shaped names (``date_*`` / ``*_date``), while
     leaving e.g. ``candidate`` alone.
     """
-    return (
-        name in _DATE_FIELD_NAMES or name.startswith("date_") or name.endswith("_date")
-    )
+    return name.startswith("date_") or name.endswith("_date")
 
 
 class ExtractedField(BaseModel):
@@ -349,16 +367,14 @@ class StructuredOCRReader:
         if not texts:
             return StructuredOCR(document_type=None if kind == "auto" else kind)
         prompt = self._format_prompt(texts)
-        agent = self._create_agent(kind, date.today())
         try:
-            result = agent.run_sync(prompt)
+            output = asyncio.run(self._extract(prompt, kind, date.today()))
         except BlitzIDError:
             raise
         except Exception as e:
             raise ModelError(
                 f"Structured extraction failed against {self.base_url}: {e}"
             ) from e
-        output = result.output
         if not isinstance(output, Extraction):
             raise ModelError(f"Expected StructuredOCR, got {type(output).__name__}")
         record = self._normalize(output, prompt, kind)
@@ -418,19 +434,14 @@ class StructuredOCRReader:
             for line in sorted(row, key=lambda text: text.bbox[0])
         )
 
-    def _create_agent(self, kind: ReadKind, today: date) -> Agent[Any, Extraction]:
-        """Build the pydantic-ai agent for one document kind.
-
-        Built per call: a reused agent's HTTP client binds to the event
-        loop of its first call and breaks later calls made from other
-        loops or threads.
-
-        Lazy import of the ``ocr`` extra.
+    async def _extract(self, prompt: str, kind: ReadKind, today: date) -> Extraction:
+        """Run one extraction with an HTTP client owned by this event loop.
 
         Raises:
             BlitzIDError: If the ``ocr`` extra cannot be imported.
         """
         try:
+            import httpx
             from pydantic_ai import Agent
             from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.output import NativeOutput
@@ -451,19 +462,25 @@ class StructuredOCRReader:
         tracing = langfuse_tracing()
         if tracing is not None:
             self.logger.info("Langfuse tracing enabled for this agent")
-        model = OpenAIChatModel(
-            self.model_name,
-            provider=OpenAIProvider(base_url=self.base_url, api_key=self.api_key),
-        )
-        agent = Agent(
-            model,
-            output_type=NativeOutput(
-                Extraction,
-                name="structured_ocr",
-                description="Structured fields extracted from document OCR text.",
-            ),
-            system_prompt=_system_prompt(kind, today),
-            model_settings=ModelSettings(timeout=self.timeout),
-        )
-        agent.instrument = tracing is not None
-        return agent
+        # The provider's default HTTP transport is cached across worker loops.
+        async with httpx.AsyncClient() as http_client:
+            model = OpenAIChatModel(
+                self.model_name,
+                provider=OpenAIProvider(
+                    base_url=self.base_url,
+                    api_key=self.api_key,
+                    http_client=http_client,
+                ),
+            )
+            agent: Agent[Any, Extraction] = Agent(
+                model,
+                output_type=NativeOutput(
+                    Extraction,
+                    name="structured_ocr",
+                    description="Structured fields extracted from document OCR text.",
+                ),
+                system_prompt=_system_prompt(kind, today),
+                model_settings=ModelSettings(timeout=self.timeout),
+            )
+            agent.instrument = tracing is not None
+            return (await agent.run(prompt)).output

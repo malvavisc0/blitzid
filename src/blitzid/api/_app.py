@@ -43,7 +43,7 @@ from blitzid.api._jobs import (
     RedisJobStore,
     StaleClaimError,
 )
-from blitzid.api._liveness import ChallengeStore
+from blitzid.api._liveness import _CHALLENGE_TTL, ChallengeStore
 from blitzid.api._schemas import (
     ChallengeResponse,
     ComparedFace,
@@ -68,19 +68,6 @@ from blitzid.reading.mrz import MRZReader
 from blitzid.reading.ocr import RapidOCRReader
 from blitzid.reading.structurize import StructuredOCRReader
 
-_ANALYSIS_TYPES = frozenset(
-    {
-        "face",
-        "attributes",
-        "antispoof",
-        "ocr",
-        "mrz",
-        "barcode",
-        "structured",
-        "consistency",
-    }
-)
-_CHALLENGE_TTL = 120.0
 _SIDES = frozenset({"front", "back", "unknown"})
 _LOG = logging.getLogger(__name__)
 
@@ -347,7 +334,7 @@ def create_app(
         app.state.config = config
         app.state.store = job_store
         app.state.engines = app_engines
-        app.state.challenges = ChallengeStore(ttl_seconds=_CHALLENGE_TTL)
+        app.state.challenges = ChallengeStore()
         app.state.cropper = DocumentCropper(
             detector=app_engines.detector,
             detector_lock=app_engines.detector_lock,
@@ -368,11 +355,9 @@ def _parse_types(values: list[str]) -> list[str]:
     if not types:
         raise HTTPException(
             422,
-            "at least one analysis type is required: "
-            "face, attributes, antispoof, ocr, mrz, barcode, structured, "
-            "consistency",
+            f"at least one analysis type is required: {', '.join(_ENGINE_CHECKS)}",
         )
-    unknown = sorted(set(types) - _ANALYSIS_TYPES)
+    unknown = sorted(set(types) - _ENGINE_CHECKS.keys())
     if unknown:
         names = ", ".join(unknown)
         raise HTTPException(422, f"unknown analysis type(s): {names}")
@@ -438,11 +423,6 @@ def _face_evidence(img: np.ndarray, selected: Face, faces: list[Face]) -> Compar
     )
 
 
-def _engine_missing(analysis_type: str, engines: Engines) -> bool:
-    """Whether the engine for one analysis type is unavailable."""
-    return _ENGINE_CHECKS[analysis_type](engines)
-
-
 _ENGINE_CHECKS: Mapping[str, Callable[[Engines], bool]] = MappingProxyType(
     {
         "face": lambda engines: engines.detector is None,
@@ -466,7 +446,7 @@ _ENGINE_CHECKS: Mapping[str, Callable[[Engines], bool]] = MappingProxyType(
 def _ensure_engines(types: list[str], engines: Engines) -> None:
     """Reject analyses whose engine is unavailable (missing extra/weights)."""
     unavailable = sorted(
-        type_name for type_name in types if _engine_missing(type_name, engines)
+        type_name for type_name in types if _ENGINE_CHECKS[type_name](engines)
     )
     if unavailable:
         raise HTTPException(

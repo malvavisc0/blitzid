@@ -3,7 +3,7 @@
 Boots the FastAPI app with real weights (plus the configured LLM
 endpoint for the ``structured`` job) and walks the identity flow over
 the committed document fixtures: ``/health``, face counts per document
-type (passport, driver licenses, ID card), ``/verify`` with and without
+type (passport, driver licenses, ID card), ``/api/verify`` with and without
 face pinning (evidence, alternatives, threshold), ``structured`` and
 ``consistency`` jobs, and one full passport job covering picture, OCR,
 MRZ, structured fields, and the code-strip cross-check together. This
@@ -25,6 +25,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 import cv2
 import fakeredis
@@ -82,10 +83,24 @@ def _section(body: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _check_health(client: TestClient) -> None:
     print("— /health —")
-    body = client.get("/api/health").json()
+    response = client.get("/api/health")
+    assert response.status_code == 200, response.text
+    body = response.json()
     print(f"  models: {body['models']}")
-    assert body["redis"] is True, body
-    assert all(body["models"].values()), f"engine(s) missing: {body['models']}"
+    assert (body["status"], body["redis"]) == ("ok", True), body
+    assert body["models"] == dict.fromkeys(
+        (
+            "face",
+            "verify",
+            "attributes",
+            "antispoof",
+            "ocr",
+            "mrz",
+            "barcode",
+            "structured",
+        ),
+        True,
+    ), f"engine(s) missing: {body['models']}"
 
 
 def _check_face_counts(client: TestClient) -> None:
@@ -97,21 +112,31 @@ def _check_face_counts(client: TestClient) -> None:
     """
     print("— faces per document type —")
     for path in (_PASSPORT, *_LICENSES, _ID_CARD):
-        faces = _submit_job(client, path, "face")["face"]["faces"]
+        faces = _section(_submit_job(client, path, "face"), "face")["faces"]
         scores = [round(face["confidence"], 2) for face in faces]
         print(f"  {path.name}: {len(faces)} face(s), confidences={scores}")
         if path in (_PASSPORT, _ID_CARD):
             assert faces, f"{path.name}: expected at least one portrait"
 
 
-def _check_verify_auto(client: TestClient) -> None:
-    print("— /verify (passport portrait vs itself) —")
+def _verify(
+    client: TestClient,
+    image1: Path,
+    image2: Path,
+    data: dict[str, str] | None = None,
+) -> dict[str, Any]:
     response = client.post(
         "/api/verify",
-        files={"image1": _upload(_PASSPORT), "image2": _upload(_PASSPORT)},
+        files={"image1": _upload(image1), "image2": _upload(image2)},
+        data=data,
     )
     assert response.status_code == 200, response.text
-    body = response.json()
+    return cast("dict[str, Any]", response.json())
+
+
+def _check_verify_auto(client: TestClient) -> None:
+    print("— /verify (passport portrait vs itself) —")
+    body = _verify(client, _PASSPORT, _PASSPORT)
     print(f"  verified={body['verified']} similarity={body['similarity']:.3f}")
     print(
         f"  face1 bbox={body['face1']['bbox']}, "
@@ -125,25 +150,23 @@ def _check_verify_auto(client: TestClient) -> None:
 
 def _check_verify_pinned(client: TestClient) -> None:
     print("— /verify (two people from the conference photo, pinned) —")
-    faces = _submit_job(client, _CONFERENCE, "face")["face"]["faces"]
+    faces = _section(_submit_job(client, _CONFERENCE, "face"), "face")["faces"]
     assert len(faces) >= 2, f"need two faces for the pinning check: {len(faces)}"
     first, second = faces[0]["bbox"], faces[1]["bbox"]
     pinned = {
         "face1_bbox": ",".join(str(v) for v in first),
         "face2_bbox": ",".join(str(v) for v in second),
     }
-    files = {"image1": _upload(_CONFERENCE), "image2": _upload(_CONFERENCE)}
-    body = client.post("/api/verify", files=files, data=pinned).json()
+    body = _verify(client, _CONFERENCE, _CONFERENCE, pinned)
     print(
         f"  compared face1={body['face1']['bbox']} vs face2={body['face2']['bbox']}, "
         f"similarity={body['similarity']:.3f} verified={body['verified']}"
     )
     assert body["face1"]["bbox"] == first and body["face2"]["bbox"] == second, body
     assert len(body["face1"]["alternatives"]) == len(faces) - 1, body["face1"]
+    assert len(body["face2"]["alternatives"]) == len(faces) - 1, body["face2"]
     assert body["verified"] is False, body
-    relaxed = client.post(
-        "/api/verify", files=files, data={**pinned, "threshold": "-1"}
-    ).json()
+    relaxed = _verify(client, _CONFERENCE, _CONFERENCE, {**pinned, "threshold": "-1"})
     print(f"  same pair at threshold=-1: verified={relaxed['verified']}")
     assert relaxed["verified"] is True, relaxed
     assert relaxed["threshold"] == -1.0, relaxed
@@ -151,7 +174,9 @@ def _check_verify_pinned(client: TestClient) -> None:
 
 def _check_structured_job(client: TestClient) -> None:
     print("— structured extraction job (ID card) —")
-    record = _submit_job(client, _ID_CARD, "structured")["structured"]["record"]
+    record = _section(_submit_job(client, _ID_CARD, "structured"), "structured")[
+        "record"
+    ]
     print(f"  document_type={record['document_type']}, fields={len(record['fields'])}")
     for field in record["fields"][:5]:
         print(f"    {field['name']}: {field['value']} (conf={field['confidence']:.2f})")
@@ -162,7 +187,7 @@ def _check_structured_job(client: TestClient) -> None:
 
 def _check_consistency_job(client: TestClient) -> None:
     print("— consistency job (TD1 specimen) —")
-    section = _submit_job(client, _NL_SPECIMEN, "consistency")["consistency"]
+    section = _section(_submit_job(client, _NL_SPECIMEN, "consistency"), "consistency")
     for row in section["comparisons"]:
         print(
             f"  {row['field']}: {row['verdict']} "
@@ -182,7 +207,7 @@ def _check_consistency_job(client: TestClient) -> None:
 
 def _check_attributes_job(client: TestClient) -> None:
     print("— attributes job (ID card portrait) —")
-    faces = _submit_job(client, _ID_CARD, "attributes")["attributes"]["faces"]
+    faces = _section(_submit_job(client, _ID_CARD, "attributes"), "attributes")["faces"]
     assert faces, "no face found"
     first = faces[0]
     print(f"  age={first['age']} gender={first['gender']} race={first['race']}")
@@ -191,7 +216,7 @@ def _check_attributes_job(client: TestClient) -> None:
 
 def _check_antispoof_job(client: TestClient) -> None:
     print("— antispoof job (ID card portrait) —")
-    faces = _submit_job(client, _ID_CARD, "antispoof")["antispoof"]["faces"]
+    faces = _section(_submit_job(client, _ID_CARD, "antispoof"), "antispoof")["faces"]
     assert faces, "no face found"
     first = faces[0]
     print(
@@ -200,10 +225,30 @@ def _check_antispoof_job(client: TestClient) -> None:
     )
     total = first["live_score"] + first["paper_score"] + first["screen_score"]
     assert 0.99 <= total <= 1.01, first
+    assert all(
+        0.0 <= first[f"{kind}_score"] <= 1.0 for kind in ("live", "paper", "screen")
+    ), first
+
+
+def _check_liveness_session(
+    client: TestClient, files: dict[str, tuple[str, bytes, str]], action: str
+) -> None:
+    response = client.post("/api/liveness/challenge")
+    assert response.status_code == 200, response.text
+    challenge = response.json()
+    assert (challenge["action"], challenge["expires_in"]) == (action, 120.0), challenge
+    data = {"challenge_id": challenge["challenge_id"]}
+    response = client.post("/api/liveness/session", data=data, files=files)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    print(f"  action={action} live={body['live']} size_ratio={body['size_ratio']}")
+    assert (body["action"], body["live"]) == (action, action == "move_closer"), body
+    replay = client.post("/api/liveness/session", data=data, files=files)
+    assert replay.status_code == 410, replay.text
 
 
 def _check_liveness(client: TestClient) -> None:
-    print("— liveness (zoom frames vs a random challenge) —")
+    print("— liveness (zoom frames vs each challenge) —")
     img = cv2.imread(str(_ID_CARD))
     assert img is not None, f"unreadable fixture: {_ID_CARD}"
     zooms = [cv2.resize(img, None, fx=scale, fy=scale) for scale in (1.0, 1.2, 1.5)]
@@ -211,19 +256,9 @@ def _check_liveness(client: TestClient) -> None:
         name: (f"{name}.png", cv2.imencode(".png", frame)[1].tobytes(), "image/png")
         for name, frame in zip(("frame1", "frame2", "frame3"), zooms, strict=True)
     }
-    challenge = client.post("/liveness/challenge").json()
-    data = {"challenge_id": challenge["challenge_id"]}
-    body = client.post("/liveness/session", data=data, files=files).json()
-    print(
-        f"  action={challenge['action']} live={body['live']} "
-        f"size_ratio={body['size_ratio']}"
-    )
-    if challenge["action"] == "move_closer":
-        assert body["live"] is True, body
-    else:
-        assert body["live"] is False, body
-    replay = client.post("/liveness/session", data=data, files=files)
-    assert replay.status_code == 410, replay.text
+    for index, action in enumerate(("turn_head", "smile", "move_closer")):
+        with patch("blitzid.api._liveness.secrets.randbelow", return_value=index):
+            _check_liveness_session(client, files, action)
 
 
 def _check_passport_scenario(client: TestClient) -> None:
@@ -263,6 +298,8 @@ def _check_passport_scenario(client: TestClient) -> None:
 
 def main() -> None:
     """Run the smoke test and exit non-zero on failure."""
+    if not __debug__:
+        raise AssertionError("Run smoke tests without Python optimization (-O).")
     logging.basicConfig(level=logging.WARNING)
     store = RedisJobStore(
         cast("redis.Redis", fakeredis.FakeStrictRedis()),

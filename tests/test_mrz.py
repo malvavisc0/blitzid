@@ -107,9 +107,19 @@ class TestSelectMrzLines:
         ]
         assert list(_select_mrz_lines(swapped)) == [TD3]
 
-    def test_strips_ocr_spaces(self) -> None:
+    @pytest.mark.parametrize("lowercase", [False, True])
+    def test_normalizes_ocr_spaces_and_case(self, lowercase: bool) -> None:
         spaced = [line.replace("<", "< ", 3) for line in TD2]
+        if lowercase:
+            spaced = [line.lower() for line in spaced]
         assert list(_select_mrz_lines(_texts(*spaced))) == [TD2]
+
+    def test_equal_y_lines_keep_lexical_order(self) -> None:
+        texts = [
+            OCRText(bbox=(0, 0, 100, 20), text=line, confidence=0.9)
+            for line in reversed(TD1)
+        ]
+        assert list(_select_mrz_lines(texts)) == [sorted(TD1)]
 
     def test_noise_line_interleaved_between_td1_lines(self) -> None:
         """A 30-char noise line between MRZ lines must not displace them."""
@@ -308,9 +318,11 @@ class TestParse:
         with pytest.raises(MRZError, match="TD3 composite"):
             _parse(bad)
 
-    def test_bad_sex_raises(self) -> None:
-        bad = [TD1[0], TD1[1][:7] + "2" + TD1[1][8:], TD1[2]]
-        with pytest.raises(MRZError, match="sex"):
+    @pytest.mark.parametrize(("template", "index"), [(TD1, 7), (TD2, 20), (TD3, 20)])
+    def test_bad_sex_raises(self, template: list[str], index: int) -> None:
+        bad = template.copy()
+        bad[1] = bad[1][:index] + "2" + bad[1][index + 1 :]
+        with pytest.raises(MRZError, match="invalid sex character: 'Z'"):
             _parse(bad)
 
     def test_ocr_digit_in_issuer_fixed(self) -> None:
@@ -343,9 +355,14 @@ class TestParse:
         record = _parse([l1, TD1[1], TD1[2]])
         assert record.document_number == "D2314589"
 
-    def test_unspecified_sex_normalized(self) -> None:
-        lines = [TD1[0], TD1[1][:7] + "<" + TD1[1][8:], TD1[2]]
-        assert _parse(lines).sex == "X"
+    @pytest.mark.parametrize(("template", "index"), [(TD1, 7), (TD2, 20), (TD3, 20)])
+    @pytest.mark.parametrize(("sex", "expected"), [("M", "M"), ("F", "F"), ("<", "X")])
+    def test_sex_normalized(
+        self, template: list[str], index: int, sex: str, expected: str
+    ) -> None:
+        lines = template.copy()
+        lines[1] = lines[1][:index] + sex + lines[1][index + 1 :]
+        assert _parse(lines).sex == expected
 
     def test_unsupported_layout_raises(self) -> None:
         with pytest.raises(MRZError, match="unsupported"):

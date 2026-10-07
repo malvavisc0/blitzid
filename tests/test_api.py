@@ -18,8 +18,9 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from threading import Barrier, Event, Thread
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any
+from unittest.mock import Mock
 
 import cv2
 import numpy as np
@@ -499,7 +500,9 @@ def _client(
     store: MemoryJobStore | RedisJobStore | None = None,
     engines: Engines | None = None,
 ) -> TestClient:
-    app = create_app(store=store, engines=engines)
+    app = create_app(
+        store=store, engines=engines if engines is not None else _stub_engines()
+    )
     return TestClient(app)
 
 
@@ -525,7 +528,13 @@ def _submit(
 ) -> Any:
     return client.post(
         f"{_API}/analyze",
-        files={"image": ("doc.png", data or _tiny_image_bytes(), "image/png")},
+        files={
+            "image": (
+                "doc.png",
+                _tiny_image_bytes() if data is None else data,
+                "image/png",
+            )
+        },
         data={"types": types},
     )
 
@@ -787,9 +796,10 @@ class TestSubmitValidation:
             response = client.post(f"{_API}/analyze", data={"types": "face"})
             assert response.status_code == 422
 
-    def test_corrupt_bytes_400(self) -> None:
+    @pytest.mark.parametrize("data", [b"", b"\x00\x01\x02not-an-image"])
+    def test_corrupt_bytes_400(self, data: bytes) -> None:
         with _client(store=MemoryJobStore()) as client:
-            response = _submit(client, data=b"\x00\x01\x02not-an-image")
+            response = _submit(client, data=data)
             assert response.status_code == 400
 
     def test_pdf_bytes_415(self) -> None:
@@ -1124,6 +1134,48 @@ class TestBarcodeJob:
             assert _submit(client, types="barcode").status_code == 400
 
 
+class TestSmokeChecks:
+    @pytest.mark.parametrize("models", [{}, {"face": True}])
+    def test_health_smoke_rejects_missing_flags(
+        self, smoke_module: Callable[[str], ModuleType], models: dict[str, bool]
+    ) -> None:
+        client = Mock(spec=TestClient)
+        client.get.return_value.status_code = 200
+        client.get.return_value.json.return_value = {
+            "status": "ok",
+            "redis": True,
+            "models": models,
+        }
+        with pytest.raises(AssertionError, match="engine"):
+            smoke_module("api")._check_health(client)
+
+    def test_section_smoke_rejects_partial_job_failure(
+        self, smoke_module: Callable[[str], ModuleType]
+    ) -> None:
+        with pytest.raises(AssertionError, match="ocr section failed"):
+            smoke_module("api")._section(
+                {"status": "done", "ocr": {"error": "failed OCR"}}, "ocr"
+            )
+
+    def test_liveness_smoke_uses_real_routes_and_covers_each_action(
+        self,
+        smoke_module: Callable[[str], ModuleType],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        smoke = smoke_module("api")
+        monkeypatch.setattr(
+            smoke.cv2, "imread", lambda path: np.zeros((100, 100, 3), np.uint8)
+        )
+        detector = _SequenceDetector(
+            [[_zoom_face(height)] for height in (40, 50, 60)] * 3
+        )
+        engines = _stub_engines()
+        engines.detector = detector
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            smoke._check_liveness(client)
+        assert detector._batches == []
+
+
 class TestLiveness:
     def test_challenge_issues_random_action(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1308,13 +1360,18 @@ class TestConsistencyJob:
         assert photo["sex"]["verdict"] == "match"
         assert photo["sex"]["document_value"] == "M"
 
-    def test_sections_share_per_job_work(self) -> None:
+    @pytest.mark.parametrize(
+        "types",
+        [
+            "face,attributes,antispoof,ocr,mrz,barcode,structured,consistency",
+            "consistency,structured,barcode,mrz,ocr,antispoof,attributes,face,"
+            "barcode,antispoof",
+        ],
+    )
+    def test_sections_share_per_job_work(self, types: str) -> None:
         engines = _stub_engines(structured=_consistent_record())
         with _client(store=MemoryJobStore(), engines=engines) as client:
-            response = _submit(
-                client,
-                types="face,attributes,antispoof,ocr,mrz,barcode,structured,consistency",
-            )
+            response = _submit(client, types=types)
             body = _poll_done(client, response.json()["job_id"])
         assert body["status"] == "done"
         assert engines.detector.calls == 1

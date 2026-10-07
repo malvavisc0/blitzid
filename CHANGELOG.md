@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-07
+
+### Changed
+
+- Removed unused `backend` attributes from `FaceAttributeReader` and
+  `AntiSpoofReader`. Detector/verifier metadata and HTTP responses are unchanged.
+- Simplified internal helpers and shared image, classifier, date, and API
+  normalization without changing package exports or response schemas.
+
+### Fixed
+
+- Empty API image uploads return the documented HTTP 400 instead of an uncaught
+  OpenCV assertion.
+- Smoke tests check the current liveness routes, all liveness actions, exact
+  specimen extraction values, automatic document classification, and verification
+  threshold boundaries. The release smoke rejects failed analysis sections and
+  always cleans up its Compose stack.
+- Structured extraction owns and closes its HTTP client per call, avoiding
+  cached transports bound to a different API worker's event loop.
+- Extraction instructions preserve two-character MRZ document codes, separate
+  issuer/check-digit fields, retain expired dates, and distinguish document
+  serials from card access numbers in forced and automatic extraction.
+
 ## [0.3.4] - 2026-10-06
 
 ### Fixed

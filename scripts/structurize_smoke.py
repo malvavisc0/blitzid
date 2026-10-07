@@ -20,23 +20,32 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import date
 
 from blitzid import OCRText, RapidOCRReader, StructuredOCR, StructuredOCRReader
 from blitzid.reading.structurize import ReadKind
 
-_MRZ_LINES = [
-    OCRText(bbox=(0, 10, 10, 10), text="P<UTODBURTON<<JAMES", confidence=0.9),
-    OCRText(bbox=(0, 30, 10, 10), text="L898902C<3UTO7408122F1204159", confidence=0.9),
-]
+_MRZ_LINES = (
+    OCRText(
+        bbox=(0, 10, 440, 10),
+        text="P<UTOERIKSSON<<ANNA<MARIA".ljust(44, "<"),
+        confidence=0.9,
+    ),
+    OCRText(
+        bbox=(0, 30, 440, 10),
+        text="L898902C36UTO7408122F1204159ZE184226B<<<<<10",
+        confidence=0.9,
+    ),
+)
 
 _ID_IMAGE = "images/bub_der_personalausweis_kopie.jpg"
 _PLATE_IMAGE = "images/ny_license_plate_wrap.jpg"
 
-_PASSES: Sequence[tuple[ReadKind, Sequence[OCRText] | str]] = [
+_PASSES: Sequence[tuple[ReadKind, Sequence[OCRText] | str]] = (
     ("mrz", _MRZ_LINES),
     ("id", _ID_IMAGE),
     ("plate", _PLATE_IMAGE),
-]
+)
 
 
 def _report(record: StructuredOCR, expected_type: str, label: str) -> None:
@@ -46,6 +55,31 @@ def _report(record: StructuredOCR, expected_type: str, label: str) -> None:
         f"got {record.document_type!r}"
     )
     assert record.fields, f"{label}: no fields extracted"
+    expected_fields: dict[str, dict[str, str | date]] = {
+        "mrz": {
+            "document_code": "P<",
+            "issuer": "UTO",
+            "document_number": "L898902C3",
+            "nationality": "UTO",
+            "surname": "ERIKSSON",
+            "given_names": "ANNA MARIA",
+            "birth_date": date(1974, 8, 12),
+            "sex": "F",
+            "expiry_date": date(2012, 4, 15),
+        },
+        "id": {
+            "surname": "MUSTERMANN",
+            "given_names": "ERIKA",
+            "document_number": "LZ6311T47",
+            "date_of_birth": date(1983, 8, 12),
+        },
+        "plate": {"plate_number": "HCM6223", "issuing_region": "NY"},
+    }
+    expected = expected_fields[expected_type]
+    values = {field.name: field.value for field in record.fields}
+    assert all(values.get(name) == value for name, value in expected.items()), (
+        f"{label}: expected {expected}, got {values}"
+    )
     print(f"  document_type: {record.document_type}")
     for field in record.fields:
         print(f"  {field.name}: {field.value} (conf={field.confidence:.2f})")
@@ -53,6 +87,8 @@ def _report(record: StructuredOCR, expected_type: str, label: str) -> None:
 
 def main() -> None:
     """Run the smoke test and exit non-zero on failure."""
+    if not __debug__:
+        raise AssertionError("Run smoke tests without Python optimization (-O).")
     logging.basicConfig(level=logging.WARNING)
 
     reader = StructuredOCRReader(log_level=logging.WARNING)
@@ -66,9 +102,8 @@ def main() -> None:
         record = reader.read(texts, kind=expected_type)
         _report(record, expected_type, label)
         auto = reader.read(texts)
-        print(
-            f"  (auto-classified as {auto.document_type!r}, {len(auto.fields)} fields)"
-        )
+        print("  auto-classification:")
+        _report(auto, expected_type, f"{label} (auto)")
 
     print("Smoke test passed.")
 

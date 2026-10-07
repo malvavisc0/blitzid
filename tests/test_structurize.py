@@ -8,15 +8,22 @@ belong in the smoke test (``scripts/structurize_smoke.py``), not here.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import sys
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from threading import Barrier
+from types import ModuleType
 
 import pytest
 from pydantic import ValidationError
 
 from blitzid import BlitzIDError, ExtractedField, OCRText, StructuredOCR
 from blitzid.reading._observability import langfuse_tracing
+from blitzid.reading.mrz import _parse
 from blitzid.reading.structurize import (
     LLM_API_KEY_ENV,
     LLM_BASE_URL_ENV,
@@ -61,6 +68,13 @@ class TestStructuredModels:
 
 
 class TestSystemPrompt:
+    @pytest.mark.parametrize("kind", ["auto", "mrz"])
+    def test_mrz_boundary_rules_apply_to_both_modes(self, kind: str) -> None:
+        prompt = _system_prompt(kind, date(2026, 10, 1))
+        assert "skip the first 5 characters of line 1" in prompt
+        assert "exactly the first 9 characters of line 2" in prompt
+        assert "document_code 'P<'" in prompt
+
     def test_stamps_todays_date(self) -> None:
         prompt = _system_prompt("mrz", date(2026, 10, 1))
         assert "Today is 2026-10-01." in prompt
@@ -72,8 +86,18 @@ class TestSystemPrompt:
 
 
 class TestDateCoercion:
-    def test_iso_date_coerced(self) -> None:
-        field = ExtractedField(name="date_of_birth", value="1983-08-12")
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "date_of_birth",
+            "date_of_expiry",
+            "birth_date",
+            "expiry_date",
+            "date_of_issue",
+        ],
+    )
+    def test_iso_date_coerced(self, name: str) -> None:
+        field = ExtractedField(name=name, value="1983-08-12")
         assert field.value == date(1983, 8, 12)
 
     def test_dot_date_coerced(self) -> None:
@@ -88,8 +112,9 @@ class TestDateCoercion:
         field = ExtractedField(name="document_number", value="L898902C")
         assert field.value == "L898902C"
 
-    def test_date_shaped_value_on_non_date_field_stays_text(self) -> None:
-        field = ExtractedField(name="document_number", value="1983-08-12")
+    @pytest.mark.parametrize("name", ["document_number", "candidate"])
+    def test_date_shaped_value_on_non_date_field_stays_text(self, name: str) -> None:
+        field = ExtractedField(name=name, value="1983-08-12")
         assert field.value == "1983-08-12"
 
 
@@ -126,10 +151,10 @@ class TestRead:
     ) -> None:
         reader = StructuredOCRReader(log_level=logging.WARNING)
 
-        def _boom(kind: object, today: object) -> object:
+        async def _boom(prompt: str, kind: str, today: date) -> Extraction:
             raise AssertionError("the agent must not be built for empty input")
 
-        monkeypatch.setattr(reader, "_create_agent", _boom)
+        monkeypatch.setattr(reader, "_extract", _boom)
         assert reader.read([]) == StructuredOCR()
 
     def test_empty_input_with_kind_stamps_document_type(self) -> None:
@@ -141,21 +166,17 @@ class TestRead:
     def test_read_stamps_raw_text_and_normalizes_values(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        class _FakeResult:
-            output: StructuredOCR = StructuredOCR(
+        async def extract(prompt: str, kind: str, today: date) -> Extraction:
+            assert prompt == "P<UTO\n<SAMPLE"
+            return StructuredOCR(
                 fields=[
                     ExtractedField(name="surname", value="mustermann"),
                     ExtractedField(name="date_of_birth", value="1983-08-12"),
                 ],
             )
 
-        class _FakeAgent:
-            def run_sync(self, prompt: str) -> _FakeResult:
-                assert prompt == "P<UTO\n<SAMPLE"
-                return _FakeResult()
-
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
+        monkeypatch.setattr(reader, "_extract", extract)
         texts = [
             OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9),
             OCRText(bbox=(20, 0, 10, 10), text="<SAMPLE", confidence=0.9),
@@ -169,15 +190,11 @@ class TestRead:
     def test_explicit_kind_stamps_document_type(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        class _FakeResult:
-            output: StructuredOCR = StructuredOCR()
-
-        class _FakeAgent:
-            def run_sync(self, prompt: str) -> _FakeResult:
-                return _FakeResult()
+        async def extract(prompt: str, kind: str, today: date) -> Extraction:
+            return StructuredOCR()
 
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
+        monkeypatch.setattr(reader, "_extract", extract)
         texts = [OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9)]
         record = reader.read(texts, kind="mrz")
         assert record.document_type == "mrz"
@@ -185,15 +202,11 @@ class TestRead:
     def test_model_fabricated_raw_text_is_overwritten(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        class _FakeResult:
-            output: StructuredOCR = StructuredOCR(raw_text="INVENTED BY MODEL")
-
-        class _FakeAgent:
-            def run_sync(self, prompt: str) -> _FakeResult:
-                return _FakeResult()
+        async def extract(prompt: str, kind: str, today: date) -> Extraction:
+            return StructuredOCR(raw_text="INVENTED BY MODEL")
 
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
+        monkeypatch.setattr(reader, "_extract", extract)
         texts = [OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9)]
         record = reader.read(texts)
         assert record.raw_text == "P<UTO"
@@ -201,8 +214,8 @@ class TestRead:
     def test_duplicate_names_collapse_to_highest_confidence(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        class _FakeResult:
-            output: StructuredOCR = StructuredOCR(
+        async def extract(prompt: str, kind: str, today: date) -> Extraction:
+            return StructuredOCR(
                 fields=[
                     ExtractedField(name="surname", value="loewen", confidence=0.5),
                     ExtractedField(name="given_names", value="hans", confidence=0.8),
@@ -210,12 +223,8 @@ class TestRead:
                 ]
             )
 
-        class _FakeAgent:
-            def run_sync(self, prompt: str) -> _FakeResult:
-                return _FakeResult()
-
         reader = StructuredOCRReader(log_level=logging.WARNING)
-        monkeypatch.setattr(reader, "_create_agent", lambda kind, today: _FakeAgent())
+        monkeypatch.setattr(reader, "_extract", extract)
         texts = [OCRText(bbox=(0, 0, 10, 10), text="P<UTO", confidence=0.9)]
         record = reader.read(texts)
         assert [(f.name, f.value, f.confidence) for f in record.fields] == [
@@ -231,6 +240,69 @@ class TestRead:
     def test_non_positive_timeout_raises(self) -> None:
         with pytest.raises(BlitzIDError, match="timeout"):
             StructuredOCRReader(timeout=0.0)
+
+    def test_worker_calls_own_and_close_their_http_clients(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pytest.importorskip("pydantic_ai")
+        import httpx
+
+        barrier = Barrier(2)
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            barrier.wait(timeout=5)
+            content = json.dumps(
+                {
+                    "document_type": "id",
+                    "fields": [
+                        {"name": "surname", "value": "SPECIMEN", "confidence": 1}
+                    ],
+                }
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "id": "synthetic-completion",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": content},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                },
+            )
+
+        clients: list[httpx.AsyncClient] = []
+
+        class Client(httpx.AsyncClient):
+            def __init__(self) -> None:
+                super().__init__(transport=httpx.MockTransport(respond))
+                clients.append(self)
+
+        monkeypatch.setattr(httpx, "AsyncClient", Client)
+        monkeypatch.setattr(
+            "blitzid.reading.structurize.langfuse_tracing", lambda: None
+        )
+        reader = StructuredOCRReader(log_level=logging.WARNING)
+        texts = [OCRText(bbox=(0, 0, 10, 10), text="SPECIMEN", confidence=1.0)]
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            futures = [workers.submit(reader.read, texts) for _ in range(2)]
+            records = [future.result(timeout=10) for future in futures]
+        assert [record.fields[0].value for record in records] == [
+            "SPECIMEN",
+            "SPECIMEN",
+        ]
+        assert len(clients) == 2
+        assert all(client.is_closed for client in clients)
 
 
 class TestConfiguration:
@@ -272,13 +344,74 @@ class TestConfiguration:
 
 
 class TestMissingExtra:
-    def test_create_agent_raises_without_pydantic_ai(
+    def test_extraction_raises_without_pydantic_ai(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         reader = StructuredOCRReader(log_level=logging.WARNING)
         monkeypatch.setitem(sys.modules, "pydantic_ai", None)
         with pytest.raises(BlitzIDError, match=r"blitzid\[ocr\]"):
-            reader._create_agent("auto", date.today())
+            asyncio.run(reader._extract("SPECIMEN", "auto", date.today()))
+
+
+class TestSmokeChecks:
+    def test_sample_mrz_is_a_valid_complete_td3(
+        self, smoke_module: Callable[[str], ModuleType]
+    ) -> None:
+        record = _parse([line.text for line in smoke_module("structurize")._MRZ_LINES])
+        assert (record.mrz_type, record.document_number) == ("TD3", "L898902C3")
+
+    @pytest.mark.parametrize(
+        ("kind", "values"),
+        [
+            ("unknown", {"surname": "MUSTERMANN"}),
+            ("id", {}),
+            ("id", {"surname": "WRONG", "given_names": "ERIKA"}),
+        ],
+    )
+    def test_smoke_rejects_wrong_classification_empty_or_incorrect_fields(
+        self,
+        smoke_module: Callable[[str], ModuleType],
+        kind: str,
+        values: dict[str, str],
+    ) -> None:
+        record = StructuredOCR(
+            document_type=kind,  # type: ignore[arg-type]
+            fields=[
+                ExtractedField(name=name, value=value) for name, value in values.items()
+            ],
+        )
+        with pytest.raises(AssertionError):
+            smoke_module("structurize")._report(record, "id", "synthetic ID")
+
+    def test_smoke_main_checks_auto_classification(
+        self,
+        smoke_module: Callable[[str], ModuleType],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class Reader:
+            def read(
+                self, texts: Sequence[OCRText], kind: str = "auto"
+            ) -> StructuredOCR:
+                return StructuredOCR(
+                    document_type="id" if kind == "id" else "unknown",
+                    fields=[
+                        ExtractedField(name="surname", value="MUSTERMANN"),
+                        ExtractedField(name="given_names", value="ERIKA"),
+                        ExtractedField(name="document_number", value="LZ6311T47"),
+                        ExtractedField(name="date_of_birth", value="1983-08-12"),
+                    ],
+                )
+
+        smoke = smoke_module("structurize")
+        monkeypatch.setattr(smoke, "StructuredOCRReader", lambda **kwargs: Reader())
+        monkeypatch.setattr(smoke, "RapidOCRReader", lambda **kwargs: None)
+        monkeypatch.setattr(
+            smoke,
+            "_PASSES",
+            (("id", (OCRText(bbox=(0, 0, 10, 10), text="SPECIMEN", confidence=1.0),)),),
+        )
+        with pytest.raises(AssertionError, match="expected document_type 'id'"):
+            smoke.main()
 
 
 class TestTracing:

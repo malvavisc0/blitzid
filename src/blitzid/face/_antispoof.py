@@ -25,7 +25,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from blitzid._image import ImageInput, load_image
-from blitzid._models import ModelManager, default_model_dir
+from blitzid._models import ModelManager
+from blitzid.face._attributes import _softmax
 from blitzid.face._face import Face
 from blitzid.face.detector import FaceDetectorDNN
 
@@ -104,11 +105,6 @@ def to_blob(
     )
 
 
-def _softmax(logits: NDArray[np.floating]) -> NDArray[np.float64]:
-    scores = np.exp(logits - np.max(logits))
-    return np.asarray(scores / scores.sum(), dtype=np.float64)
-
-
 class AntiSpoofReader:
     """Scores every detected face as live, printed photo, or screen.
 
@@ -137,14 +133,13 @@ class AntiSpoofReader:
             detector
             if detector is not None
             else FaceDetectorDNN(
-                model_dir=model_dir if model_dir is not None else default_model_dir(),
+                model_dir=model_dir,
                 log_level=log_level,
                 allow_downloads=allow_downloads,
             )
         )
         if model_dir is None:
             model_dir = self.detector.model_manager.model_dir
-        self.backend = "ONNXRuntime"
         self.model_manager = ModelManager(
             model_dir,
             self.logger,

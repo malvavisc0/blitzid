@@ -223,11 +223,12 @@ def _select_mrz_lines(texts: list[OCRText]) -> Iterator[list[str]]:
     stray OCR line above, between, or below the zone cannot displace
     real MRZ lines without a validation attempt.
     """
-    candidates = sorted(
-        (text.bbox[1], text.text.replace(" ", "").upper())
-        for text in texts
-        if _is_mrz_line(text.text.replace(" ", "").upper())
-    )
+    candidates: list[tuple[int, str]] = []
+    for text in texts:
+        line = text.text.replace(" ", "").upper()
+        if _is_mrz_line(line):
+            candidates.append((text.bbox[1], line))
+    candidates.sort()
     for length, count in _LINE_COUNT.items():
         group = [(y, text) for y, text in candidates if len(text) == length]
         for combo in combinations(reversed(group), count):
@@ -276,7 +277,6 @@ def _parse_td1(l1: str, l2: str, l3: str) -> MRZRecord:
     optional1 = l1[15:30]
     birth_date = _verify_date("TD1 birth date", l2[0:6])
     birth_check = _fix_digits(l2[6])
-    sex_char = _fix_letters(l2[7])
     expiry_date = _verify_date("TD1 expiry date", l2[8:14])
     expiry_check = _fix_digits(l2[14])
     nationality = _verify_letters("TD1 nationality", l2[15:18])
@@ -303,7 +303,7 @@ def _parse_td1(l1: str, l2: str, l3: str) -> MRZRecord:
         issuer=issuer,
         document_number=document_number.rstrip("<"),
         birth_date=birth_date,
-        sex=_normalize_sex(sex_char),
+        sex=_normalize_sex(l2[7]),
         expiry_date=expiry_date,
         nationality=nationality,
         surname=surname,
@@ -322,7 +322,6 @@ def _parse_td2(l1: str, l2: str) -> MRZRecord:
     nationality = _verify_letters("TD2 nationality", l2[10:13])
     birth_date = _verify_date("TD2 birth date", l2[13:19])
     birth_check = _fix_digits(l2[19])
-    sex_char = _fix_letters(l2[20])
     expiry_date = _verify_date("TD2 expiry date", l2[21:27])
     expiry_check = _fix_digits(l2[27])
     optional_data = l2[28:35]
@@ -347,7 +346,7 @@ def _parse_td2(l1: str, l2: str) -> MRZRecord:
         issuer=issuer,
         document_number=document_number.rstrip("<"),
         birth_date=birth_date,
-        sex=_normalize_sex(sex_char),
+        sex=_normalize_sex(l2[20]),
         expiry_date=expiry_date,
         nationality=nationality,
         surname=surname,
@@ -365,7 +364,6 @@ def _parse_td3(l1: str, l2: str) -> MRZRecord:
     nationality = _verify_letters("TD3 nationality", l2[10:13])
     birth_date = _verify_date("TD3 birth date", l2[13:19])
     birth_check = _fix_digits(l2[19])
-    sex_char = _fix_letters(l2[20])
     expiry_date = _verify_date("TD3 expiry date", l2[21:27])
     expiry_check = _fix_digits(l2[27])
     optional_data = l2[28:42]
@@ -393,7 +391,7 @@ def _parse_td3(l1: str, l2: str) -> MRZRecord:
         issuer=issuer,
         document_number=document_number.rstrip("<"),
         birth_date=birth_date,
-        sex=_normalize_sex(sex_char),
+        sex=_normalize_sex(l2[20]),
         expiry_date=expiry_date,
         nationality=nationality,
         surname=surname,

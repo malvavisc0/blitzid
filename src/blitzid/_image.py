@@ -111,7 +111,7 @@ def _load_from_pil(pil_image: PILImageType) -> np.ndarray:
     if len(img_array.shape) == 3 and img_array.shape[2] == 3:
         img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
     elif len(img_array.shape) == 2:
-        img = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+        img = _normalize_channels(img_array)
     else:
         img = img_array
 

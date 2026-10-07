@@ -1,6 +1,6 @@
 # ── Builder: install deps and bake model weights ──────────────
 FROM python:3.12-slim AS builder
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/
 WORKDIR /app
 COPY README.md pyproject.toml uv.lock ./
 COPY src/ src/
@@ -10,7 +10,7 @@ COPY scripts/ scripts/
 # (barcode), LLM-backed structured extraction and Langfuse tracing
 # (ocr), and the bundled scripts (scripts). Only the dev toolchain
 # stays out.
-RUN uv sync --frozen --no-dev --extra api --extra barcode --extra ocr --extra scripts
+RUN uv sync --frozen --extra api --extra barcode --extra ocr --extra scripts
 # Bake every engine's weights (SCRFD, ArcFace, RapidOCR) so cold start
 # needs no downloads.
 RUN uv run --no-sync python scripts/download_models.py --models-dir /models

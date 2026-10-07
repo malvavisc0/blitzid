@@ -121,7 +121,7 @@ def _is_digits(value: str) -> bool:
 
 def _field(elements: Mapping[str, str], tag: str, label: str) -> str:
     """The mandatory element's value, erroring when it is missing."""
-    value = elements.get(tag, "").strip()
+    value = _optional(elements, tag)
     if not value:
         raise BarcodeError(f"missing {label} ({tag})")
     return value
@@ -164,15 +164,14 @@ def _names(version: str, elements: Mapping[str, str]) -> tuple[str, str, str]:
     wins over a DCT remainder for the middle name.
     """
     family = _field(elements, "DCS", "family name")
+    middle = _optional(elements, "DAD") or ""
     if version in _LEGACY_GIVEN:
         parts = _field(elements, "DCT", "given name").split(",")
         given = parts[0]
-        middle = elements.get("DAD", "").strip()
         if not middle and len(parts) > 1:
             middle = ",".join(parts[1:])
     else:
         given = _field(elements, "DAC", "given name")
-        middle = elements.get("DAD", "").strip()
     return family, given, middle
 
 

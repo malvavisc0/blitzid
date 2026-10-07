@@ -14,8 +14,6 @@
 services:
   llm:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    container_name: blitzid-llm
-    hostname: llm
     environment:
       # Offload every layer to VRAM; the CPU image set this to 0.
       LLAMA_ARG_N_GPU_LAYERS: "99"

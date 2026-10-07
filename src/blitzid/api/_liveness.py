@@ -19,17 +19,13 @@ from blitzid.face._motion import LivenessAction
 __all__ = ["ChallengeStore"]
 
 _ACTIONS: tuple[LivenessAction, ...] = ("turn_head", "smile", "move_closer")
+_CHALLENGE_TTL = 120.0
 
 
 class ChallengeStore:
-    """Issues and consumes one-use liveness challenges.
+    """Issues and consumes one-use, 120-second liveness challenges."""
 
-    Args:
-        ttl_seconds: How long an unused challenge stays valid.
-    """
-
-    def __init__(self, ttl_seconds: float = 120.0) -> None:
-        self._ttl = ttl_seconds
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._open: dict[str, tuple[LivenessAction, float]] = {}
 
@@ -39,7 +35,7 @@ class ChallengeStore:
         action = _ACTIONS[secrets.randbelow(len(_ACTIONS))]
         with self._lock:
             self._sweep()
-            self._open[challenge_id] = (action, time.monotonic() + self._ttl)
+            self._open[challenge_id] = (action, time.monotonic() + _CHALLENGE_TTL)
         return challenge_id, action
 
     def consume(self, challenge_id: str) -> LivenessAction | None:

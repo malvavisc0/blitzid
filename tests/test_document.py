@@ -93,6 +93,33 @@ class TestQuadDetection:
 
 
 class TestQualityChecks:
+    def test_sharpness_and_brightness_share_grayscale_after_face_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        detector = _StubDetector([])
+
+        def detect(img: np.ndarray) -> list[Face]:
+            img[:] = 15
+            return []
+
+        monkeypatch.setattr(detector, "detect_face_landmarks", detect)
+        conversions: list[int] = []
+        convert = cv2.cvtColor
+
+        def to_gray(img: np.ndarray, code: int) -> np.ndarray:
+            assert img[0, 0, 0] == 15
+            conversions.append(code)
+            return convert(img, code)
+
+        monkeypatch.setattr(cv2, "cvtColor", to_gray)
+        cropper = DocumentCropper(detector=detector)  # type: ignore[arg-type]
+        crop = np.full((600, 960, 3), 110, dtype=np.uint8)
+        report = cropper._quality_report(
+            crop, ((0, 0), (959, 0), (959, 599), (0, 599)), "front"
+        )
+        assert conversions == [cv2.COLOR_BGR2GRAY]
+        assert report.checks["brightness"] == "fail"
+
     def test_small_document_fails_resolution(
         self, synthetic_document: Callable[..., np.ndarray]
     ) -> None:

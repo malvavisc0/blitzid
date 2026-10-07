@@ -21,12 +21,12 @@ import numpy as np
 from blitzid._image import crop_with_padding
 from blitzid.api._upload import decode_image_bytes, dims_within_bounds, encode_jpeg_b64
 from blitzid.exceptions import BlitzIDError, ModelError
-from blitzid.face._antispoof import AntiSpoofReader, AntiSpoofResult
+from blitzid.face._antispoof import AntiSpoofReader
 from blitzid.face._attributes import FaceAttributeReader, FaceAttributes
 from blitzid.face._face import Face
 from blitzid.face.detector import FaceDetectorDNN
 from blitzid.face.verifier import FaceVerifier
-from blitzid.reading.barcode import BarcodeReader, BarcodeRecord, _record_dict
+from blitzid.reading.barcode import BarcodeReader, _record_dict
 from blitzid.reading.consistency import cross_check
 from blitzid.reading.mrz import MRZReader, MRZRecord
 from blitzid.reading.ocr import OCRText, RapidOCRReader
@@ -166,22 +166,6 @@ def _read_attributes(
     return _memoized(memo, "attributes", _load)
 
 
-def _read_antispoof(
-    img: np.ndarray, engines: Engines, memo: dict[str, Any]
-) -> list[AntiSpoofResult]:
-    """Score the image's faces against spoofing (shared between sections)."""
-    reader = engines.antispoof_reader
-    if reader is None:
-        raise ModelError(
-            "antispoof analysis requires the SCRFD detector and MiniFASNet weights"
-        )
-
-    def _load() -> list[AntiSpoofResult]:
-        return reader.read_faces(img, _read_faces(img, engines, memo))
-
-    return _memoized(memo, "antispoof", _load)
-
-
 def _read_mrz(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> MRZRecord:
     """Parse the MRZ from the shared OCR text lines."""
     reader = engines.mrz_reader
@@ -192,20 +176,6 @@ def _read_mrz(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> MRZRec
         return reader.parse(_read_texts(img, engines, memo))
 
     return _memoized(memo, "mrz", _load)
-
-
-def _read_barcode(
-    img: np.ndarray, engines: Engines, memo: dict[str, Any]
-) -> BarcodeRecord:
-    """Decode and parse the PDF417 barcode (shared between sections)."""
-    reader = engines.barcode_reader
-    if reader is None:
-        raise ModelError("barcode analysis requires the blitzid[barcode] extra")
-
-    def _load() -> BarcodeRecord:
-        return reader.read(img)
-
-    return _memoized(memo, "barcode", _load)
 
 
 def _read_structured(
@@ -258,7 +228,12 @@ def _run_antispoof(
     img: np.ndarray, engines: Engines, memo: dict[str, Any]
 ) -> dict[str, Any]:
     """Build the antispoof section (live/paper/screen scores per face)."""
-    scores = _read_antispoof(img, engines, memo)
+    reader = engines.antispoof_reader
+    if reader is None:
+        raise ModelError(
+            "antispoof analysis requires the SCRFD detector and MiniFASNet weights"
+        )
+    scores = reader.read_faces(img, _read_faces(img, engines, memo))
     return {"faces": [asdict(item) for item in scores]}
 
 
@@ -286,7 +261,10 @@ def _run_barcode(
     img: np.ndarray, engines: Engines, memo: dict[str, Any]
 ) -> dict[str, Any]:
     """Build the barcode section."""
-    return {"record": _record_dict(_read_barcode(img, engines, memo))}
+    reader = engines.barcode_reader
+    if reader is None:
+        raise ModelError("barcode analysis requires the blitzid[barcode] extra")
+    return {"record": _record_dict(reader.read(img))}
 
 
 def _run_structured(

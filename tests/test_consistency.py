@@ -180,11 +180,21 @@ class TestDates:
         report = cross_check(_structured(**values), _mrz(), today=_TODAY)
         assert _verdicts(report)["date_of_birth"] == "unavailable"
 
-    def test_birth_date_alias_is_compared(self) -> None:
-        values = {k: v for k, v in _MATCHING.items() if k != "date_of_birth"}
-        values["birth_date"] = date(1965, 3, 10)
+    @pytest.mark.parametrize(
+        ("field", "alias"),
+        [("date_of_birth", "birth_date"), ("date_of_expiry", "expiry_date")],
+    )
+    @pytest.mark.parametrize("conflicting", [False, True])
+    def test_date_alias_preserves_canonical_precedence(
+        self, field: str, alias: str, conflicting: bool
+    ) -> None:
+        values = dict(_MATCHING)
+        if conflicting:
+            values[alias] = date(1999, 1, 1)
+        else:
+            values[alias] = values.pop(field)
         report = cross_check(_structured(**values), _mrz(), today=_TODAY)
-        assert _verdicts(report)["date_of_birth"] == "match"
+        assert _verdicts(report)[field] == "match"
 
 
 class TestPhotoCrossCheck:

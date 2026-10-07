@@ -27,6 +27,8 @@ PDF_MAGIC = b"%PDF-"
 
 def decode_image_bytes(data: bytes) -> np.ndarray | None:
     """Decode raw image bytes into a BGR array, or None if undecodable."""
+    if not data:
+        return None
     return cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
 
 

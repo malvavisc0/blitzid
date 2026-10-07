@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Callable
+from pathlib import Path
+from types import ModuleType
 
 import cv2
 import numpy as np
@@ -54,3 +57,18 @@ def _synthetic_document(
 def synthetic_document() -> Callable[..., np.ndarray]:
     """Factory for synthetic document images (see ``_synthetic_document``)."""
     return _synthetic_document
+
+
+@pytest.fixture
+def smoke_module() -> Callable[[str], ModuleType]:
+    """Load a smoke script without running its model-backed entry point."""
+
+    def load(name: str) -> ModuleType:
+        path = Path(__file__).parent.parent / "scripts" / f"{name}_smoke.py"
+        spec = importlib.util.spec_from_file_location(f"{name}_smoke", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    return load

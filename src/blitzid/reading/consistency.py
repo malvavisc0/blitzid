@@ -54,16 +54,11 @@ _PRINTED_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 _MRZ_FIELDS: dict[str, str] = {
-    "document_number": "document_number",
     "date_of_birth": "birth_date",
     "date_of_expiry": "expiry_date",
-    "surname": "surname",
-    "given_names": "given_names",
-    "sex": "sex",
 }
 
 _NAME_FIELDS = frozenset({"surname", "given_names"})
-_DATE_FIELDS = frozenset({"date_of_birth", "date_of_expiry"})
 
 _BAND_TOLERANCE = 10
 _PHOTO_SEXES = {"Male": "M", "Female": "F"}
@@ -83,7 +78,7 @@ def _photo_rows(
         ]
     birth = _document_birth(mrz, printed, today)
     age = None if birth is None else _age_in_years(birth, today)
-    document_sex = getattr(mrz, _MRZ_FIELDS["sex"]) or printed["sex"][0]
+    document_sex = mrz.sex or printed["sex"][0]
     return [
         PhotoComparison(
             field="age",
@@ -108,9 +103,7 @@ def _document_birth(
     today: date,
 ) -> date | None:
     """The document's birth date: the code strip's, else the printed one."""
-    birth = _mrz_date(
-        getattr(mrz, _MRZ_FIELDS["date_of_birth"]), expiry=False, today=today
-    )
+    birth = _mrz_date(mrz.birth_date, expiry=False, today=today)
     if birth is not None:
         return birth
     raw = printed["date_of_birth"][0]
@@ -254,9 +247,9 @@ def cross_check(
     printed = _printed_values(structured)
     rows = []
     for field in _COMPARED_FIELDS:
-        mrz_value = getattr(mrz, _MRZ_FIELDS[field]) or None
+        mrz_value = getattr(mrz, _MRZ_FIELDS.get(field, field)) or None
         printed_value, confidence = printed[field]
-        if field in _DATE_FIELDS:
+        if field in _MRZ_FIELDS:
             verdict = _date_verdict(mrz_value, printed_value, field, today)
         elif field in _NAME_FIELDS:
             verdict = _name_verdict(mrz_value, printed_value)

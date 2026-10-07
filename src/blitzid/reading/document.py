@@ -230,9 +230,8 @@ def _check_resolution(crop: np.ndarray) -> CheckResult:
     return "fail"
 
 
-def _check_sharpness(crop: np.ndarray) -> CheckResult:
+def _check_sharpness(gray: np.ndarray) -> CheckResult:
     """Laplacian variance of the crop: high passes, low fails."""
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     if variance >= SHARPNESS_PASS_VAR:
         return "pass"
@@ -241,9 +240,9 @@ def _check_sharpness(crop: np.ndarray) -> CheckResult:
     return "fail"
 
 
-def _check_brightness(crop: np.ndarray) -> CheckResult:
+def _check_brightness(gray: np.ndarray) -> CheckResult:
     """Mean intensity in bounds passes; the margins warn; outside fails."""
-    mean = float(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).mean())
+    mean = float(gray.mean())
     if BRIGHTNESS_MIN <= mean <= BRIGHTNESS_MAX:
         return "pass"
     if (
@@ -379,12 +378,13 @@ class DocumentCropper:
         face_found, face_check = _check_face_present(
             crop, side, self._detector, self._detector_lock
         )
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         checks: dict[str, CheckResult] = {
             "document_found": "pass",
             "aspect_ratio": _check_aspect_ratio(crop),
             "resolution": _check_resolution(crop),
-            "sharpness": _check_sharpness(crop),
-            "brightness": _check_brightness(crop),
+            "sharpness": _check_sharpness(gray),
+            "brightness": _check_brightness(gray),
             "face_present": face_check,
         }
         height, width = crop.shape[:2]

@@ -22,8 +22,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from blitzid._image import ImageInput, load_image
-from blitzid._models import ModelManager, default_model_dir
+from blitzid._image import ImageInput, crop_with_padding, load_image
+from blitzid._models import ModelManager
 from blitzid.exceptions import ModelError
 from blitzid.face._face import Face
 from blitzid.face.detector import FaceDetectorDNN
@@ -91,18 +91,6 @@ class FaceAttributes:
     race_confidence: float
 
 
-def _crop_face(
-    img: NDArray[np.uint8], bbox: tuple[int, int, int, int]
-) -> NDArray[np.uint8]:
-    """Crop one face with a 25% margin, clamped to the image."""
-    x, y, w, h = bbox
-    x1 = max(0, x - int(w * _CROP_MARGIN))
-    y1 = max(0, y - int(h * _CROP_MARGIN))
-    x2 = min(img.shape[1], x + w + int(w * _CROP_MARGIN))
-    y2 = min(img.shape[0], y + h + int(h * _CROP_MARGIN))
-    return img[y1:y2, x1:x2]
-
-
 def to_blob(
     img: NDArray[np.uint8], bbox: tuple[int, int, int, int]
 ) -> NDArray[np.float32]:
@@ -115,7 +103,8 @@ def to_blob(
     Returns:
         ``(1, 3, 224, 224)`` float32 blob, ImageNet-normalized.
     """
-    resized = cv2.resize(_crop_face(img, bbox), ATTRIBUTE_INPUT_SIZE)
+    crop = crop_with_padding(img, bbox, _CROP_MARGIN)
+    resized = cv2.resize(crop, ATTRIBUTE_INPUT_SIZE)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     normalized = (rgb - _MEAN) / _STD
     return np.ascontiguousarray(
@@ -166,14 +155,13 @@ class FaceAttributeReader:
             detector
             if detector is not None
             else FaceDetectorDNN(
-                model_dir=model_dir if model_dir is not None else default_model_dir(),
+                model_dir=model_dir,
                 log_level=log_level,
                 allow_downloads=allow_downloads,
             )
         )
         if model_dir is None:
             model_dir = self.detector.model_manager.model_dir
-        self.backend = "ONNXRuntime"
         self.model_manager = ModelManager(
             model_dir,
             self.logger,

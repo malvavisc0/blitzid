@@ -70,7 +70,7 @@ def verify_action(action: LivenessAction, faces: Sequence[Face]) -> MotionEviden
     first, _, last = faces[0], faces[1], faces[2]
     nose_shift = abs(_nose_t(last) - _nose_t(first))
     mouth_change = _mouth_ratio(last) / _mouth_ratio(first) - 1.0
-    size_ratio = _height(last) / _height(first)
+    size_ratio = float(last.bbox[3]) / float(first.bbox[3])
     if action == "turn_head":
         verified = nose_shift >= _TURN_MIN
     elif action == "smile":
@@ -101,7 +101,3 @@ def _nose_t(face: Face) -> float:
 def _mouth_ratio(face: Face) -> float:
     *_, (mx1, my1), (mx2, my2) = face.landmarks
     return math.hypot(mx2 - mx1, my2 - my1) / _eye_gap(face)
-
-
-def _height(face: Face) -> float:
-    return float(face.bbox[3])

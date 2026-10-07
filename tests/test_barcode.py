@@ -214,18 +214,26 @@ class TestParseRecord:
     @pytest.mark.parametrize("version", _VERSIONS)
     def test_parses_every_edition(self, version: str) -> None:
         record = _parse_aamva(_payload(version))
-        assert record.jurisdiction == "636014"
-        assert record.aamva_version == version
-        assert record.jurisdiction_version == "00"
-        assert record.family_name == "PUBLIC"
-        assert record.given_name == "JOHN"
-        assert record.middle_name == "QUINCY"
-        assert record.birth_date == date(1989, 1, 24)
-        assert record.issue_date == date(2013, 6, 4)
-        assert record.expiry_date == date(2035, 1, 31)
-        assert record.sex == "M"
-        assert record.license_number == "D12345678"
-        assert record.height == "069 in"
+        assert (
+            record.jurisdiction,
+            record.aamva_version,
+            record.jurisdiction_version,
+        ) == ("636014", version, "00")
+        assert (record.family_name, record.given_name, record.middle_name) == (
+            "PUBLIC",
+            "JOHN",
+            "QUINCY",
+        )
+        assert (record.birth_date, record.issue_date, record.expiry_date) == (
+            date(1989, 1, 24),
+            date(2013, 6, 4),
+            date(2035, 1, 31),
+        )
+        assert (record.sex, record.license_number, record.height) == (
+            "M",
+            "D12345678",
+            "069 in",
+        )
 
     def test_canadian_date_format(self) -> None:
         payload = _payload(
@@ -234,10 +242,11 @@ class TestParseRecord:
         )
         assert _parse_aamva(payload).birth_date == date(1989, 1, 24)
 
-    def test_legacy_dct_splits_given_and_middle(self) -> None:
+    @pytest.mark.parametrize("middle", ["QUINCY", "QUINCY,MAXIMUS"])
+    def test_legacy_dct_splits_given_and_middle(self, middle: str) -> None:
         elements = [
             ("DCS", "PUBLIC"),
-            ("DCT", "JOHN,QUINCY"),
+            ("DCT", f"JOHN,{middle}"),
             ("DBB", "01241989"),
             ("DBD", "06042013"),
             ("DBA", "01312035"),
@@ -246,7 +255,7 @@ class TestParseRecord:
         ]
         record = _parse_aamva(_payload("03", elements=elements))
         assert record.given_name == "JOHN"
-        assert record.middle_name == "QUINCY"
+        assert record.middle_name == middle
 
     def test_legacy_dad_wins_over_dct_middle(self) -> None:
         elements = [
@@ -274,6 +283,15 @@ class TestParseRecord:
             ("DAQ", "D12345678"),
         ]
         record = _parse_aamva(_payload("14", elements=elements))
+        assert record.middle_name == ""
+        assert record.height is None
+
+    def test_strips_values_and_treats_blank_optional_fields_as_absent(self) -> None:
+        elements = _elements(
+            "08", DCS="  PUBLIC  ", DAC="  JOHN  ", DAD=" \t ", DAU=" \t "
+        )
+        record = _parse_aamva(_payload("08", elements=elements))
+        assert (record.family_name, record.given_name) == ("PUBLIC", "JOHN")
         assert record.middle_name == ""
         assert record.height is None
 
@@ -329,21 +347,31 @@ class TestPublishedSample:
         so the tag map is checked against the standard's own example.
         """
         record = _parse_aamva(_AAMVA_2020_SAMPLE)
-        assert record.jurisdiction == "636000"
-        assert record.aamva_version == "10"
-        assert record.jurisdiction_version == "01"
-        assert record.family_name == "SAMPLE"
-        assert record.given_name == "MICHAEL"
-        assert record.middle_name == "JOHN"
-        assert record.birth_date == date(1986, 6, 6)
-        assert record.issue_date == date(2019, 6, 6)
-        assert record.expiry_date == date(2024, 12, 10)
-        assert record.sex == "M"
-        assert record.license_number == "T64235789"
-        assert record.height == "068 in"
-        assert record.extra_tags["DCU"] == "JR"
-        assert record.extra_tags["DDF"] == "N"
-        assert record.extra_tags["ZVA"] == "01"
+        assert (
+            record.jurisdiction,
+            record.aamva_version,
+            record.jurisdiction_version,
+        ) == ("636000", "10", "01")
+        assert (record.family_name, record.given_name, record.middle_name) == (
+            "SAMPLE",
+            "MICHAEL",
+            "JOHN",
+        )
+        assert (record.birth_date, record.issue_date, record.expiry_date) == (
+            date(1986, 6, 6),
+            date(2019, 6, 6),
+            date(2024, 12, 10),
+        )
+        assert (record.sex, record.license_number, record.height) == (
+            "M",
+            "T64235789",
+            "068 in",
+        )
+        assert (
+            record.extra_tags["DCU"],
+            record.extra_tags["DDF"],
+            record.extra_tags["ZVA"],
+        ) == ("JR", "N", "01")
 
 
 class TestSectionBody:
@@ -357,8 +385,11 @@ class TestSectionBody:
 
 
 class TestParseValidation:
-    def test_missing_family_name(self) -> None:
+    @pytest.mark.parametrize("name", [None, " \t "])
+    def test_missing_family_name(self, name: str | None) -> None:
         elements = [tag for tag in _elements("08") if tag[0] != "DCS"]
+        if name is not None:
+            elements.append(("DCS", name))
         with pytest.raises(BarcodeError, match="missing family name"):
             _parse_aamva(_payload("08", elements=elements))
 

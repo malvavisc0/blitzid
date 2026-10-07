@@ -74,9 +74,11 @@ class VerifyResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """200 response for GET /health — engine/Redis/job availability."""
+    """Health response with package/build identity and engine/Redis/job state."""
 
     status: str
+    version: str
+    revision: str | None
     models: dict[str, bool]
     redis: bool
     jobs: dict[str, int]

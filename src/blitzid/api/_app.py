@@ -27,6 +27,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
+from importlib.metadata import version
 from types import MappingProxyType
 from typing import Annotated, Any
 
@@ -343,7 +344,8 @@ def create_app(
         yield
         workers.stop()
 
-    app = FastAPI(title="blitzid", lifespan=lifespan)
+    app = FastAPI(title="blitzid", version=version("blitzid"), lifespan=lifespan)
+    app.state.revision = os.environ.get("BLITZID_BUILD_REVISION") or None
     _register_routes(app)
     return app
 
@@ -642,6 +644,8 @@ def _register_routes(app: FastAPI) -> None:
             response.status_code = 503
         return HealthResponse(
             status="ok" if redis_ok else "degraded",
+            version=request.app.version,
+            revision=request.app.state.revision,
             models={
                 "face": engines.detector is not None,
                 "verify": engines.verifier is not None,

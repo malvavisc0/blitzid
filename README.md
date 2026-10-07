@@ -369,6 +369,12 @@ unreachable (the container is unhealthy: it cannot accept or process
 jobs); a missing engine stays `200` with its `models` flag false, since
 submitting that analysis yields a precise `400`.
 
+It also returns `version` from the installed `blitzid` package and `revision`
+from the image's `BLITZID_BUILD_REVISION` build argument (the Git commit SHA in
+release images, `null` when unspecified). OpenAPI reports the same package
+version. Engine flags indicate initialization, not an inference or LLM
+connectivity check.
+
 Privacy: uploads and results live in RAM end to end. Job payloads are
 stored as raw image bytes (never base64-inflated), Redis runs with
 persistence disabled, results are claim-once and TTL-bounded, and the

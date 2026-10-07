@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-10-07
+
+### Added
+
+- `/api/health` reports the installed package version and image build revision.
+  Release images bake in the Git commit SHA, and the release smoke verifies both
+  values. Local and pip installs report `revision: null` when unspecified.
+
+### Fixed
+
+- OpenAPI uses the installed package version instead of FastAPI's default
+  `0.1.0`.
+
 ## [0.3.5] - 2026-10-07
 
 ### Changed

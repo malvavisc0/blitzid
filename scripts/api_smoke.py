@@ -22,7 +22,9 @@ be set (the structured engine is checked in ``/health``).
 from __future__ import annotations
 
 import logging
+import os
 import time
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -101,6 +103,12 @@ def _check_health(client: TestClient) -> None:
         ),
         True,
     ), f"engine(s) missing: {body['models']}"
+    assert (body["version"], body["revision"]) == (
+        version("blitzid"),
+        os.environ.get("BLITZID_BUILD_REVISION") or None,
+    ), "release metadata mismatch"
+    assert client.get("/openapi.json").json()["info"]["version"] == body["version"]
+    print(f"  version={body['version']} revision={body['revision']}")
 
 
 def _check_face_counts(client: TestClient) -> None:

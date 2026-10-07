@@ -17,8 +17,10 @@ RUN uv run --no-sync python scripts/download_models.py --models-dir /models
 
 # ── Runtime: venv + baked weights, non-root ─────────────────────
 FROM python:3.12-slim
+ARG BLITZID_BUILD_REVISION
 COPY --from=builder /app /app
 COPY --from=builder /models /models
+ENV BLITZID_BUILD_REVISION=$BLITZID_BUILD_REVISION
 ENV BLITZID_MODELS_DIR=/models
 ENV PATH=/app/.venv/bin:$PATH
 # Scripts reference fixtures via relative "images/" paths, and the

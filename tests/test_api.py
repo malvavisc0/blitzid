@@ -16,6 +16,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from datetime import date
+from importlib.metadata import version
 from pathlib import Path
 from threading import Barrier, Event, Thread
 from types import MappingProxyType, ModuleType
@@ -861,6 +862,20 @@ class TestSubmitValidation:
 
 
 class TestHealth:
+    @pytest.mark.parametrize("revision", [None, "", "a" * 40])
+    def test_package_version_and_build_revision(
+        self, monkeypatch: pytest.MonkeyPatch, revision: str | None
+    ) -> None:
+        monkeypatch.delenv("BLITZID_BUILD_REVISION", raising=False)
+        if revision is not None:
+            monkeypatch.setenv("BLITZID_BUILD_REVISION", revision)
+        with _client(store=MemoryJobStore()) as client:
+            monkeypatch.setenv("BLITZID_BUILD_REVISION", "changed-after-app-creation")
+            body = client.get(f"{_API}/health").json()
+            schema = client.get("/openapi.json").json()
+        assert body["version"] == schema["info"]["version"] == version("blitzid")
+        assert body["revision"] == (revision or None)
+
     def test_reports_engines_redis_and_jobs(self) -> None:
         with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
             response = client.get(f"{_API}/health")
@@ -880,13 +895,17 @@ class TestHealth:
             assert body["redis"] is True
             assert set(body["jobs"]) == {"queued", "running", "stored"}
 
-    def test_degraded_without_engines_and_redis(self) -> None:
+    def test_degraded_without_engines_and_redis(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BLITZID_BUILD_REVISION", "a" * 40)
         engines = Engines(detector=None, ocr_reader=None, mrz_reader=None)
         with _client(store=_BrokenStore(), engines=engines) as client:
             response = client.get(f"{_API}/health")
             assert response.status_code == 503
             body = response.json()
             assert body["status"] == "degraded"
+            assert (body["version"], body["revision"]) == (version("blitzid"), "a" * 40)
             assert body["redis"] is False
             assert body["models"] == {
                 "face": False,
@@ -1135,6 +1154,42 @@ class TestBarcodeJob:
 
 
 class TestSmokeChecks:
+    @pytest.mark.parametrize(
+        ("reported_version", "reported_revision"),
+        [("0.0.0", None), (version("blitzid"), "b" * 40)],
+    )
+    def test_health_smoke_rejects_mismatched_release_metadata(
+        self,
+        smoke_module: Callable[[str], ModuleType],
+        monkeypatch: pytest.MonkeyPatch,
+        reported_version: str,
+        reported_revision: str | None,
+    ) -> None:
+        monkeypatch.delenv("BLITZID_BUILD_REVISION", raising=False)
+        client = Mock(spec=TestClient)
+        client.get.return_value.status_code = 200
+        client.get.return_value.json.return_value = {
+            "status": "ok",
+            "redis": True,
+            "models": dict.fromkeys(
+                (
+                    "face",
+                    "verify",
+                    "attributes",
+                    "antispoof",
+                    "ocr",
+                    "mrz",
+                    "barcode",
+                    "structured",
+                ),
+                True,
+            ),
+            "version": reported_version,
+            "revision": reported_revision,
+        }
+        with pytest.raises(AssertionError, match="release metadata mismatch"):
+            smoke_module("api")._check_health(client)
+
     @pytest.mark.parametrize("models", [{}, {"face": True}])
     def test_health_smoke_rejects_missing_flags(
         self, smoke_module: Callable[[str], ModuleType], models: dict[str, bool]

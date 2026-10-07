@@ -483,4 +483,5 @@ class StructuredOCRReader:
                 model_settings=ModelSettings(timeout=self.timeout),
             )
             agent.instrument = tracing is not None
-            return (await agent.run(prompt)).output
+            output: Extraction = (await agent.run(prompt)).output
+            return output

@@ -446,7 +446,7 @@ _ENGINE_CHECKS: Mapping[str, Callable[[Engines], bool]] = MappingProxyType(
 
 
 def _ensure_engines(types: list[str], engines: Engines) -> None:
-    """Reject analyses whose engine is unavailable (missing barcode/weights)."""
+    """Reject analyses whose engine is unavailable (missing weights/zxing)."""
     unavailable = sorted(
         type_name for type_name in types if _ENGINE_CHECKS[type_name](engines)
     )
@@ -454,8 +454,8 @@ def _ensure_engines(types: list[str], engines: Engines) -> None:
         raise HTTPException(
             400,
             f"analysis engine(s) unavailable: {', '.join(unavailable)}; "
-            "ocr/mrz need the RapidOCR engine, barcode the blitzid[barcode] "
-            "extra, face/attributes/antispoof need the YuNet weights "
+            "ocr/mrz need the RapidOCR engine, barcode the zxing-cpp engine, "
+            "face/attributes/antispoof need the YuNet weights "
             "(attributes also FairFace, antispoof also MiniFASNet), and "
             "structured/consistency need the OCR engine plus BLITZID_LLM_* "
             "config",

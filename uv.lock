@@ -199,6 +199,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "rapidocr" },
+    { name = "zxing-cpp" },
 ]
 
 [package.optional-dependencies]
@@ -215,16 +216,12 @@ all = [
     { name = "tqdm" },
     { name = "types-tqdm" },
     { name = "uvicorn", extra = ["standard"] },
-    { name = "zxing-cpp" },
 ]
 api = [
     { name = "fastapi" },
     { name = "python-multipart" },
     { name = "redis" },
     { name = "uvicorn", extra = ["standard"] },
-]
-barcode = [
-    { name = "zxing-cpp" },
 ]
 dev = [
     { name = "fakeredis" },
@@ -246,7 +243,7 @@ scripts = [
 
 [package.metadata]
 requires-dist = [
-    { name = "blitzid", extras = ["api", "barcode", "scripts", "dev"], marker = "extra == 'all'" },
+    { name = "blitzid", extras = ["api", "scripts", "dev"], marker = "extra == 'all'" },
     { name = "fakeredis", marker = "extra == 'dev'" },
     { name = "fakeredis", marker = "extra == 'scripts'" },
     { name = "fastapi", marker = "extra == 'api'" },
@@ -273,9 +270,9 @@ requires-dist = [
     { name = "tqdm", marker = "extra == 'scripts'" },
     { name = "types-tqdm", marker = "extra == 'dev'" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'" },
-    { name = "zxing-cpp", marker = "extra == 'barcode'" },
+    { name = "zxing-cpp" },
 ]
-provides-extras = ["barcode", "api", "scripts", "dev", "all"]
+provides-extras = ["api", "scripts", "dev", "all"]
 
 [[package]]
 name = "cachetools"

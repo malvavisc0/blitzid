@@ -2,7 +2,7 @@
 
 Boots the FastAPI app with real weights (plus the configured LLM
 endpoint for the ``structured`` job) and walks the identity flow over
-the committed document fixtures: ``/health``, ``/crop``, a synthetic
+the committed document fixtures: ``/api/health``, ``/api/crop``, a synthetic
 barcode job, face counts per document type (passport, driver licenses,
 ID card), ``/api/verify`` with and without face pinning (evidence,
 alternatives, threshold), ``structured`` and ``consistency`` jobs, and
@@ -17,7 +17,7 @@ Run example::
     uv run --env-file .env python scripts/api_smoke.py
 
 Exits non-zero if any endpoint misbehaves. The BLITZID_LLM_* trio must
-be set (the structured engine is checked in ``/health``).
+be set (the structured engine is checked in ``/api/health``).
 """
 
 from __future__ import annotations

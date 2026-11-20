@@ -2,7 +2,7 @@
 
 US and Canadian driver's licenses carry the machine-readable record on
 the back as a PDF417 barcode encoding an AAMVA DL/ID payload. The
-decoder runs zxing-cpp (the ``barcode`` extra); the parser is pure
+decoder runs zxing-cpp (core); the parser is pure
 logic over the decoded text and mirrors the MRZ layer's posture: the
 header's subfile offsets, lengths, and number-of-entries count are
 validated, mandatory fields are gated, and a failure raises
@@ -320,13 +320,12 @@ def _record_dict(record: BarcodeRecord) -> dict[str, Any]:
 
 
 def _load_zxingcpp() -> Any:
-    """Import zxing-cpp, mapping a missing ``barcode`` extra to BlitzIDError."""
+    """Import zxing-cpp, mapping a missing dependency to BlitzIDError."""
     try:
         import zxingcpp
     except ImportError as e:
         raise BlitzIDError(
-            "zxing-cpp is not installed. "
-            "Install the barcode extra: pip install blitzid[barcode]"
+            "zxing-cpp is a required dependency but is not installed; reinstall blitzid"
         ) from e
     return zxingcpp
 
@@ -338,7 +337,7 @@ class BarcodeReader:
         log_level: Logging level for the reader's logger.
 
     Raises:
-        BlitzIDError: If the ``barcode`` extra (zxing-cpp) is not installed.
+        BlitzIDError: If the zxing-cpp dependency is unavailable.
     """
 
     def __init__(self, log_level: int = logging.INFO) -> None:

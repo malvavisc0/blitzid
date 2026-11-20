@@ -43,15 +43,12 @@ dependencies = [
     "pydantic-ai>=2.71",
     "httpx2",
     "langfuse",
+    # PDF417 decoding for AAMVA driver's-license payloads.
+    "zxing-cpp",
 ]
 
 # ── Optional dependency groups ─────────────────────────────
 [project.optional-dependencies]
-barcode = [
-    # PDF417 decoding for AAMVA driver's-license payloads (also the
-    # encoder the test suite round-trips synthetic payloads with).
-    "zxing-cpp",
-]
 api = [
     "fastapi",
     "uvicorn[standard]",
@@ -79,7 +76,7 @@ dev = [
     "fakeredis",
 ]
 all = [
-    "blitzid[api,barcode,scripts,dev]",
+    "blitzid[api,scripts,dev]",
 ]
 
 # ── Build system ───────────────────────────────────────────
@@ -135,7 +132,7 @@ strict = true
 [[tool.mypy.overrides]]
 # Lazy/optional imports (PIL in _image.py, rapidocr in ocr.py,
 # pydantic-ai + httpx2 in structurize.py, langfuse + opentelemetry in
-# _observability.py). rapidocr has no type stubs; PIL, zxing-cpp, and
+# _observability.py). rapidocr and zxing-cpp have no type stubs; PIL and
 # the observability stack are only present in some installs.
 module = [
     "PIL",

@@ -3,8 +3,7 @@
 Parser tests are pure-function over synthetic payloads plus the
 standard's own published sample (no PII: every name, number, and date
 is invented or the AAMVA fictitious specimen). Decode tests round-trip
-synthetic payloads through zxing-cpp's PDF417 encoder/decoder and are
-skipped when the ``barcode`` extra is absent.
+synthetic payloads through zxing-cpp's PDF417 encoder/decoder.
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ from datetime import date
 
 import numpy as np
 import pytest
+import zxingcpp
 
 from blitzid import BarcodeError, BarcodeReader, BlitzIDError
 from blitzid.reading.barcode import _parse_aamva, _record_dict
@@ -435,13 +435,12 @@ class TestReader:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setitem(sys.modules, "zxingcpp", None)
-        with pytest.raises(BlitzIDError, match=r"blitzid\[barcode\]"):
+        with pytest.raises(BlitzIDError, match="required dependency"):
             BarcodeReader()
 
 
 class TestDecodeRoundTrip:
     def _encode(self, text: str) -> np.ndarray:
-        zxingcpp = pytest.importorskip("zxingcpp")
         return np.asarray(
             zxingcpp.create_barcode(
                 text, format=zxingcpp.BarcodeFormat.PDF417
@@ -449,7 +448,6 @@ class TestDecodeRoundTrip:
         )
 
     def test_round_trips_a_v08_payload(self) -> None:
-        pytest.importorskip("zxingcpp")
         reader = BarcodeReader(log_level=logging.WARNING)
         payload = _payload("08")
         record = reader.read(self._encode(payload))
@@ -460,14 +458,12 @@ class TestDecodeRoundTrip:
         assert record.license_number == "D12345678"
 
     def test_round_trips_a_v02_payload(self) -> None:
-        pytest.importorskip("zxingcpp")
         reader = BarcodeReader(log_level=logging.WARNING)
         record = reader.read(self._encode(_payload("02")))
         assert record.aamva_version == "02"
         assert record.given_name == "JOHN"
 
     def test_accepts_a_pil_image(self) -> None:
-        pytest.importorskip("zxingcpp")
         pytest.importorskip("PIL")
         from PIL import Image
 
@@ -476,34 +472,29 @@ class TestDecodeRoundTrip:
         assert record.aamva_version == "10"
 
     def test_accepts_a_three_channel_array(self) -> None:
-        pytest.importorskip("zxingcpp")
         reader = BarcodeReader(log_level=logging.WARNING)
         gray = self._encode(_payload("08"))
         record = reader.read(np.repeat(gray[:, :, None], 3, axis=2))
         assert record.aamva_version == "08"
 
     def test_falls_back_past_a_corrupt_candidate(self) -> None:
-        pytest.importorskip("zxingcpp")
         reader = BarcodeReader(log_level=logging.WARNING)
         canvas = _on_canvas(self._encode(_payload("15")), self._encode(_payload("08")))
         record = reader.read(canvas)
         assert record.aamva_version == "08"
 
     def test_raises_the_candidate_error_when_nothing_parses(self) -> None:
-        pytest.importorskip("zxingcpp")
         reader = BarcodeReader(log_level=logging.WARNING)
         with pytest.raises(BarcodeError, match="unsupported AAMVA version"):
             reader.read(self._encode(_payload("15")))
 
     def test_no_barcode_raises(self) -> None:
-        pytest.importorskip("zxingcpp")
         reader = BarcodeReader(log_level=logging.WARNING)
         blank = np.zeros((200, 400, 3), dtype=np.uint8)
         with pytest.raises(BarcodeError, match="no PDF417 barcode"):
             reader.read(blank)
 
     def test_non_aamva_payload_raises(self) -> None:
-        pytest.importorskip("zxingcpp")
         reader = BarcodeReader(log_level=logging.WARNING)
         with pytest.raises(BarcodeError, match="no AAMVA payload"):
             reader.read(self._encode("garbage, not a license"))

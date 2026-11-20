@@ -54,7 +54,7 @@ endpoint via `BLITZID_LLM_BASE_URL` / `BLITZID_LLM_API_KEY` /
 uv run --env-file .env python scripts/structurize_smoke.py
 ```
 
-## `api_smoke.py` — HTTP API smoke test (needs `api` + `barcode` extras)
+## `api_smoke.py` — HTTP API smoke test (needs the `api` extra)
 
 Boots the FastAPI app in-process with real engines and walks the
 identity flow over the committed fixtures: `/api/health` (every engine

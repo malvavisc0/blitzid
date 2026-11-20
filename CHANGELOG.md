@@ -21,10 +21,11 @@ All notable changes to this project will be documented in this file.
   Model notices live in `THIRD_PARTY_NOTICES.md`.
 - **Breaking (packaging):** removed the `ocr` and `structured` extras and
   moved their dependencies (`rapidocr`, `pydantic-ai>=2.71`, `httpx2`,
-  `langfuse`) into the core install. `pip install blitzid` now always
-  includes text reading, MRZ parsing, and structured extraction; the
-  remaining runtime extras are `barcode` and `api` (plus `scripts` and
-  `dev` for contributors). This also removes the `opentelemetry-api<1.44`
+  `langfuse`) into the core install, and moved `zxing-cpp` out of the
+  `barcode` extra. `pip install blitzid` now always includes text
+  reading, MRZ parsing, PDF417 barcode reading, and structured
+  extraction; the only remaining runtime extra is `api` (plus `scripts`
+  and `dev` for contributors). This also removes the `opentelemetry-api<1.44`
   hold: pydantic-ai 2.x no longer imports the private
   `opentelemetry._events` module removed in OpenTelemetry 1.44. The
   lockfile is refreshed (pydantic-ai 2.71, OpenTelemetry 1.45.2, Langfuse

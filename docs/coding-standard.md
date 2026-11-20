@@ -16,7 +16,7 @@ filtering, batch processing, bbox visualization, and 1:1 cosine
 verification; FairFace attributes and MiniFASNet anti-spoofing use
 onnxruntime CPU. Document reading (`src/blitzid/reading/`): RapidOCR
 text lines (core), ICAO 9303 MRZ parsing (TD1/TD2/TD3), AAMVA PDF417
-driver's-license parsing (`barcode` extra), and LLM-backed structured
+driver's-license parsing (core, zxing-cpp), and LLM-backed structured
 extraction (core).
 Inputs are file paths, NumPy arrays, or PIL Images; outputs are
 `(x, y, w, h, confidence)` tuples and crops.
@@ -25,9 +25,10 @@ Inputs are file paths, NumPy arrays, or PIL Images; outputs are
 - python 3.12+ (CI matrix: 3.12 / 3.13 / 3.14), uv, pyproject.toml
   (hatchling backend, src layout, `py.typed`)
 - core deps: numpy, onnxruntime (CPU), opencv-python-headless>=5,
-  platformdirs, pydantic, rapidocr, pydantic-ai, httpx2, langfuse
-- optional extras: `barcode` (zxing-cpp), `api` (fastapi, uvicorn,
-  redis), `scripts` (tqdm), `dev` (pytest, ruff, mypy, pre-commit)
+  platformdirs, pydantic, rapidocr, pydantic-ai, httpx2, langfuse,
+  zxing-cpp
+- optional extras: `api` (fastapi, uvicorn, redis), `scripts` (tqdm),
+  `dev` (pytest, ruff, mypy, pre-commit)
 - Type checker: **mypy** (`strict = true` in pyproject.toml)
 - Lint/format: **ruff** (line-length 88, target py312; E, W, F, I, UP,
   B, SIM, RUF)
@@ -146,7 +147,7 @@ Write the simplest correct solution. Delete anything that isn't needed.
 - Heavy/optional imports (PIL, rapidocr, pydantic-ai / httpx2,
   langfuse, zxing-cpp) are lazy-imported inside functions, guarded, with
   targeted `# type: ignore` codes; a missing core dependency is a
-  broken install, and zxing-cpp remains optional.
+  broken install, and PIL remains optional.
 - The MRZ layer (`src/blitzid/reading/mrz.py`) is pure ICAO 9303 logic
   over the OCR reader's text lines — no new models, no guessy repair:
   obvious OCR confusions (0/O, 1/I, 2/Z, 5/S, 6/G, 8/B) resolve
@@ -171,8 +172,8 @@ Write the simplest correct solution. Delete anything that isn't needed.
   engine (RapidOCR on onnxruntime CPU), lazy-imported from the core
   dependencies. The MRZ surface is `MRZReader.read()` returning an
   `MRZRecord`. The barcode surface is
-  `BarcodeReader.read()` returning a `BarcodeRecord` (`barcode`
-  extra, zxing-cpp decoder; the parser validates the AAMVA header's
+  `BarcodeReader.read()` returning a `BarcodeRecord` (core dependency,
+  zxing-cpp decoder; the parser validates the AAMVA header's
   subfile offsets/lengths/count, gates mandatory fields per
   edition-pinned tag maps, keeps unknown tags raw in `extra_tags`,
   and raises `BarcodeError` naming the offending field).

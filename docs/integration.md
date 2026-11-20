@@ -88,8 +88,8 @@ container cannot accept work.
 | Face match | `POST /api/verify` | similarity, verdict, and both compared crops as evidence |
 | Health | `GET /api/health` | which engines are loaded |
 
-`barcode` requires the `barcode` extra (`pip install
-blitzid[barcode]`); every other block is in the core install.
+Every analysis block is in the core install; only the HTTP API server
+is an extra (`pip install blitzid[api]`).
 
 ## Recipes
 

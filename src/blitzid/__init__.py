@@ -16,7 +16,7 @@ Public API
 - ``MRZReader`` — the ICAO 9303 machine-readable zone reader.
 - ``MRZRecord`` — parsed MRZ fields.
 - ``BarcodeReader`` — the AAMVA PDF417 driver's-license reader
-  (``barcode`` extra).
+  (core).
 - ``BarcodeRecord`` — parsed AAMVA payload fields.
 - ``StructuredOCRReader`` — LLM-backed structured output from OCR lines
   (core).

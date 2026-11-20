@@ -55,7 +55,7 @@ class Engines:
     thread-safe, so they run outside any lock, and the zxing-cpp barcode
     decode is a stateless per-call function.
     Fields are None when an engine is unavailable (missing ``ocr`` or
-    ``barcode`` extra, missing weights, missing LLM configuration).
+    missing zxing-cpp, missing weights, missing LLM configuration).
     """
 
     detector: FaceDetectorDNN | None
@@ -265,7 +265,7 @@ def _run_barcode(
     """Build the barcode section."""
     reader = engines.barcode_reader
     if reader is None:
-        raise ModelError("barcode analysis requires the blitzid[barcode] extra")
+        raise ModelError("barcode analysis requires the initialized zxing-cpp engine")
     return {"record": _record_dict(reader.read(img))}
 
 

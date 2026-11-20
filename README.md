@@ -50,13 +50,12 @@ Langfuse instance you choose.
 ## Installation
 
 ```bash
-pip install blitzid           # includes OCR, MRZ, and structured extraction
-pip install blitzid[barcode]  # with PDF417/AAMVA barcode reading (zxing-cpp)
+pip install blitzid           # includes OCR, MRZ, barcode, and structured extraction
 pip install blitzid[api]      # with the HTTP API server
 ```
 
-OCR/MRZ and the LLM-backed structured reader are core; only barcode
-decoding and the HTTP API are optional runtime extras.
+OCR/MRZ, PDF417 barcode reading, and the LLM-backed structured reader
+are core; the HTTP API is the only optional runtime extra.
 
 ## Quick start
 
@@ -141,12 +140,12 @@ nationality), and parses TD1 (3x30), TD2 (2x36), and TD3 (2x44) into an
 convention (overflow at the start of `optional_data1`, no printed check
 digit).
 
-**PDF417 barcode reading.** `BarcodeReader` (the `barcode` extra,
-zxing-cpp) decodes the PDF417 code on the back of US and Canadian
-driver's licenses and parses the AAMVA DL/ID payload into a typed
-`BarcodeRecord` — jurisdiction, AAMVA version, names, dates, sex, and
-license number, plus the raw jurisdiction-specific extras. The header's
-subfile offsets, lengths, and number-of-entries count are validated and
+**PDF417 barcode reading.** `BarcodeReader` (core, zxing-cpp) decodes
+the PDF417 code on the back of US and Canadian driver's licenses and
+parses the AAMVA DL/ID payload into a typed `BarcodeRecord` —
+jurisdiction, AAMVA version, names, dates, sex, and license number,
+plus the raw jurisdiction-specific extras. The header's subfile
+offsets, lengths, and number-of-entries count are validated and
 the mandatory fields are gated, so a malformed payload raises
 `BarcodeError` naming the offending field.
 
@@ -214,10 +213,10 @@ and gender against the birth date and sex; the photo rows need the
 Validation is eager, before the job exists: `422` unknown type or
 missing fields, `400` undecodable bytes or an analysis whose engine is
 unavailable (`ocr`/`mrz` when the RapidOCR engine failed to start,
-`barcode` without the `barcode` extra, `structured`/`consistency` when
-the OCR or LLM engine is unavailable), `413` above the
-upload cap, `503` + `Retry-After` when the queue is full or Redis is
-down. Accepted jobs return `202`:
+`barcode` when the zxing-cpp engine failed to start, and
+`structured`/`consistency` when the OCR or LLM engine is unavailable),
+`413` above the upload cap, and `503` + `Retry-After` when the queue is
+full or Redis is down. Accepted jobs return `202`:
 
 ```bash
 curl -F image=@id.jpg -F types=face,ocr localhost:8000/api/analyze
@@ -586,14 +585,13 @@ print(record.mrz_type, record.document_number, record.surname)
 
 ### `BarcodeReader`
 
-Defined in [`reading/barcode.py`](src/blitzid/reading/barcode.py);
-requires the `barcode` extra (`pip install blitzid[barcode]`). Decodes
-the PDF417 code on the back of US and Canadian driver's licenses with
-zxing-cpp and parses the AAMVA DL/ID payload (versions 02–14). The
-header's subfile offsets, lengths, and number-of-entries count are
-validated, the mandatory fields are gated, and a failing payload raises
-`BarcodeError` naming the offending field — nothing is invented or
-repaired.
+Defined in [`reading/barcode.py`](src/blitzid/reading/barcode.py).
+Decodes the PDF417 code on the back of US and Canadian driver's
+licenses with zxing-cpp and parses the AAMVA DL/ID payload (versions
+02–14). The header's subfile offsets, lengths, and number-of-entries
+count are validated, the mandatory fields are gated, and a failing
+payload raises `BarcodeError` naming the offending field — nothing is
+invented or repaired.
 
 | Method | Description |
 |---|---|

@@ -7,10 +7,10 @@ COPY LICENSES/ LICENSES/
 COPY src/ src/
 COPY scripts/ scripts/
 # Every runtime feature ships in the image: the HTTP API (api), face
-# detection/verification, OCR, MRZ, and LLM-backed structured extraction
-# in the core, PDF417 barcode reading (barcode), and the bundled scripts
-# (scripts). Only the dev toolchain stays out.
-RUN uv sync --frozen --extra api --extra barcode --extra scripts
+# detection/verification, OCR, MRZ, barcode reading, and LLM-backed
+# structured extraction in the core, plus the bundled scripts (scripts).
+# Only the API extra and dev toolchain are outside the core.
+RUN uv sync --frozen --extra api --extra scripts
 # Bake every engine's weights (YuNet, SFace, FairFace, MiniFASNet,
 # RapidOCR) so cold start needs no downloads.
 RUN uv run --no-sync python scripts/download_models.py --models-dir /models

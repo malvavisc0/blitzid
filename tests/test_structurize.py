@@ -245,11 +245,11 @@ class TestRead:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         pytest.importorskip("pydantic_ai")
-        import httpx
+        import httpx2
 
         barrier = Barrier(2)
 
-        def respond(request: httpx.Request) -> httpx.Response:
+        def respond(request: httpx2.Request) -> httpx2.Response:
             barrier.wait(timeout=5)
             content = json.dumps(
                 {
@@ -259,7 +259,7 @@ class TestRead:
                     ],
                 }
             )
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "id": "synthetic-completion",
@@ -281,14 +281,14 @@ class TestRead:
                 },
             )
 
-        clients: list[httpx.AsyncClient] = []
+        clients: list[httpx2.AsyncClient] = []
 
-        class Client(httpx.AsyncClient):
+        class Client(httpx2.AsyncClient):
             def __init__(self) -> None:
-                super().__init__(transport=httpx.MockTransport(respond))
+                super().__init__(transport=httpx2.MockTransport(respond))
                 clients.append(self)
 
-        monkeypatch.setattr(httpx, "AsyncClient", Client)
+        monkeypatch.setattr(httpx2, "AsyncClient", Client)
         monkeypatch.setattr(
             "blitzid.reading.structurize.langfuse_tracing", lambda: None
         )

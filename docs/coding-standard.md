@@ -24,9 +24,9 @@ Inputs are file paths, NumPy arrays, or PIL Images; outputs are
   (hatchling backend, src layout, `py.typed`)
 - core deps: numpy, onnxruntime (CPU), opencv-python-headless>=5,
   platformdirs, pydantic
-- optional extras: `ocr` (rapidocr, pydantic-ai, langfuse), `barcode`
-  (zxing-cpp), `api` (fastapi, uvicorn, redis), `scripts` (tqdm),
-  `dev` (pytest, ruff, mypy, pre-commit)
+- optional extras: `ocr` (rapidocr, pydantic-ai, httpx2, langfuse),
+  `barcode` (zxing-cpp), `api` (fastapi, uvicorn, redis), `scripts`
+  (tqdm), `dev` (pytest, ruff, mypy, pre-commit)
 - Type checker: **mypy** (`strict = true` in pyproject.toml)
 - Lint/format: **ruff** (line-length 88, target py312; E, W, F, I, UP,
   B, SIM, RUF)

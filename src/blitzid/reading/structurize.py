@@ -441,7 +441,7 @@ class StructuredOCRReader:
             BlitzIDError: If the ``ocr`` extra cannot be imported.
         """
         try:
-            import httpx
+            import httpx2
             from pydantic_ai import Agent
             from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.output import NativeOutput
@@ -463,7 +463,7 @@ class StructuredOCRReader:
         if tracing is not None:
             self.logger.info("Langfuse tracing enabled for this agent")
         # The provider's default HTTP transport is cached across worker loops.
-        async with httpx.AsyncClient() as http_client:
+        async with httpx2.AsyncClient() as http_client:
             model = OpenAIChatModel(
                 self.model_name,
                 provider=OpenAIProvider(

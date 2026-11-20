@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The `ocr` extra now requires `pydantic-ai>=2.71` instead of pinning
+  `opentelemetry-api<1.44`: pydantic-ai 2.x no longer imports the private
+  `opentelemetry._events` module removed in OpenTelemetry 1.44. The lockfile is
+  refreshed across all extras (pydantic-ai 2.71, OpenTelemetry 1.45.2, Langfuse
+  5.2), and the structured reader passes an `httpx2` client to the provider as
+  pydantic-ai now deprecates legacy `httpx` clients.
+
 ## [0.3.6] - 2026-10-07
 
 ### Added

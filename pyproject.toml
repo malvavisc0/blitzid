@@ -42,14 +42,13 @@ dependencies = [
 [project.optional-dependencies]
 ocr = [
     "rapidocr",
-    # LLM-backed structured extraction from OCR output.
-    "pydantic-ai",
+    # LLM-backed structured extraction from OCR output. The httpx2
+    # client below requires 2.32+; pin to the release validated here.
+    "pydantic-ai>=2.71",
+    # Per-call async HTTP client passed to the pydantic-ai OpenAI provider.
+    "httpx2",
     # Optional: Langfuse tracing of the LLM calls (env-gated).
     "langfuse",
-    # opentelemetry-api 1.44+ dropped the private `._events` module
-    # pydantic-ai 0.8.1 still imports; hold the 1.43 line until it
-    # catches up.
-    "opentelemetry-api<1.44",
 ]
 barcode = [
     # PDF417 decoding for AAMVA driver's-license payloads (also the
@@ -134,7 +133,7 @@ strict = true
 
 [[tool.mypy.overrides]]
 # Optional user-installed dependencies, lazy-imported inside guarded
-# methods (PIL in _image.py, rapidocr in ocr.py, pydantic-ai in
+# methods (PIL in _image.py, rapidocr in ocr.py, pydantic-ai + httpx2 in
 # structurize.py, langfuse + opentelemetry in _observability.py):
 # absent in core-only installs, so there is nothing to type-check
 # against there.
@@ -146,6 +145,7 @@ module = [
     "zxingcpp",
     "pydantic_ai",
     "pydantic_ai.*",
+    "httpx2",
     "langfuse",
     "langfuse.*",
     "opentelemetry.*",

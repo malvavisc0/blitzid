@@ -36,6 +36,7 @@ import logging
 import os
 from collections.abc import Mapping, Sequence
 from datetime import date
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -75,82 +76,84 @@ _MRZ_BOUNDARIES = (
     "year or invent a future expiry. "
 )
 
-_PROMPTS: dict[str, str] = {
-    "auto": (
-        "Extract structured data from OCR text. Set document_type to exactly "
-        "one of: 'id' (identity document with person data), 'plate' "
-        "(a vehicle license plate), 'mrz' (ICAO 9303 machine-readable zone: "
-        "lines of A-Z, 0-9, and '<'), or 'unknown'. "
-        "Classify by text shape: an mrz is only lines of A-Z, 0-9, and "
-        "'<' with no words or labels; if the text contains words, labels, "
-        "or names (e.g. 'Name', 'Surname', 'Nationality', "
-        "'Personalausweis'), it is an 'id'. "
-        "Then return only fields you can recover. "
-        "id fields: surname, given_names, date_of_birth, nationality, "
-        "document_number, date_of_expiry, place_of_birth, sex — ignore '<' "
-        "filler lines; dates may read DD.MM.YYYY or DD/MM/YYYY (DD.MM.YYYY "
-        "is day-first); document_number is the document serial, never the "
-        "CAN/card access number or a personal ID number. On a German "
-        "Personalausweis it is the 9-character alphanumeric serial near "
-        "the header, not the separate 6-digit access code. sex is M, "
-        "F, or X. "
-        "plate fields: plate_number, issuing_region — plate_number is "
-        "letters and digits only, drop spaces and separators ('ABC-1234' "
-        "becomes 'ABC1234'); issuing_region is the standard country or "
-        "state code when one exists ('NEW YORK' becomes 'NY'), else the "
-        "printed name. "
-        "mrz fields: document_code, issuer, document_number, nationality, "
-        "surname, given_names, birth_date, sex, expiry_date — '<<' splits "
-        "surname from given names and single '<' is a space; keep every "
-        "letter of the names as printed; strip trailing "
-        "'<' fillers from document_number and names; the 6-digit dates are "
-        "YYMMDD (birth: most recent century not after today; expiry: always "
-        "20YY); sex '<' means X; never emit check digits or optional/"
-        "personal-number data. "
-    )
-    + _MRZ_BOUNDARIES,
-    "id": (
-        "Extract person data from identity-document OCR (visual zone). "
-        "Ignore machine-readable '<' filler lines. Return only recovered "
-        "fields: surname, given_names, date_of_birth, nationality, "
-        "document_number, date_of_expiry, place_of_birth, sex. "
-        "document_number is the document serial, not a personal ID number "
-        "or the CAN/card access number. On a German Personalausweis it is "
-        "the 9-character alphanumeric serial near the header, not the "
-        "separate 6-digit access code. "
-        "sex is M, F, or X. Dates may read DD.MM.YYYY or DD/MM/YYYY "
-        "(DD.MM.YYYY is day-first) — emit YYYY-MM-DD. "
-    ),
-    "plate": (
-        "Extract a vehicle license plate from OCR text. Return only "
-        "recovered fields: plate_number (letters and digits only — drop "
-        "spaces and separators, e.g. 'ABC-1234' becomes 'ABC1234'), "
-        "issuing_region (the standard country or state code when one "
-        "exists — 'NEW YORK' becomes 'NY' — else the printed name). "
-    ),
-    "mrz": (
-        "Extract ICAO 9303 MRZ fields from OCR (TD1 3x30, TD2 2x36, TD3 "
-        "2x44). Lines hold A-Z, 0-9, and '<' filler. TD3 line 1: document "
-        "code (2 chars, e.g. 'P<'), issuer (3 letters), then the name. "
-        "Line 2: document number (9 chars, '<'-padded) + check digit, "
-        "nationality (3 letters), birth YYMMDD + check digit, sex, expiry "
-        "YYMMDD + check digit, optional data + check digit. TD1 and TD2 "
-        "pack the same fields into shorter lines (TD1 puts the document "
-        "number on line 1 and personal number on line 2). Names: '<<' "
-        "separates surname from given_names, single '<' is a space — "
-        "'DOE<<JOHN<PAUL' gives surname 'DOE', given_names 'JOHN PAUL'. "
-        "Keep every letter of the names as printed. "
-        "Strip trailing '<' fillers from document_number and names. Dates: "
-        "birth in the most recent century that does not put it after today "
-        "('850102' gives 1985-01-02); expiry always 20YY ('271231' gives "
-        "2027-12-31). sex is M, F, or X ('<' in the sex position means X). "
-        "Return only recovered fields: document_code, issuer, "
-        "document_number, nationality, surname, given_names, birth_date, "
-        "sex, expiry_date. Never emit check digits or optional/"
-        "personal-number data. "
-    )
-    + _MRZ_BOUNDARIES,
-}
+_PROMPTS: Mapping[str, str] = MappingProxyType(
+    {
+        "auto": (
+            "Extract structured data from OCR text. Set document_type to exactly "
+            "one of: 'id' (identity document with person data), 'plate' "
+            "(a vehicle license plate), 'mrz' (ICAO 9303 machine-readable zone: "
+            "lines of A-Z, 0-9, and '<'), or 'unknown'. "
+            "Classify by text shape: an mrz is only lines of A-Z, 0-9, and "
+            "'<' with no words or labels; if the text contains words, labels, "
+            "or names (e.g. 'Name', 'Surname', 'Nationality', "
+            "'Personalausweis'), it is an 'id'. "
+            "Then return only fields you can recover. "
+            "id fields: surname, given_names, date_of_birth, nationality, "
+            "document_number, date_of_expiry, place_of_birth, sex — ignore '<' "
+            "filler lines; dates may read DD.MM.YYYY or DD/MM/YYYY (DD.MM.YYYY "
+            "is day-first); document_number is the document serial, never the "
+            "CAN/card access number or a personal ID number. On a German "
+            "Personalausweis it is the 9-character alphanumeric serial near "
+            "the header, not the separate 6-digit access code. sex is M, "
+            "F, or X. "
+            "plate fields: plate_number, issuing_region — plate_number is "
+            "letters and digits only, drop spaces and separators ('ABC-1234' "
+            "becomes 'ABC1234'); issuing_region is the standard country or "
+            "state code when one exists ('NEW YORK' becomes 'NY'), else the "
+            "printed name. "
+            "mrz fields: document_code, issuer, document_number, nationality, "
+            "surname, given_names, birth_date, sex, expiry_date — '<<' splits "
+            "surname from given names and single '<' is a space; keep every "
+            "letter of the names as printed; strip trailing "
+            "'<' fillers from document_number and names; the 6-digit dates are "
+            "YYMMDD (birth: most recent century not after today; expiry: always "
+            "20YY); sex '<' means X; never emit check digits or optional/"
+            "personal-number data. "
+        )
+        + _MRZ_BOUNDARIES,
+        "id": (
+            "Extract person data from identity-document OCR (visual zone). "
+            "Ignore machine-readable '<' filler lines. Return only recovered "
+            "fields: surname, given_names, date_of_birth, nationality, "
+            "document_number, date_of_expiry, place_of_birth, sex. "
+            "document_number is the document serial, not a personal ID number "
+            "or the CAN/card access number. On a German Personalausweis it is "
+            "the 9-character alphanumeric serial near the header, not the "
+            "separate 6-digit access code. "
+            "sex is M, F, or X. Dates may read DD.MM.YYYY or DD/MM/YYYY "
+            "(DD.MM.YYYY is day-first) — emit YYYY-MM-DD. "
+        ),
+        "plate": (
+            "Extract a vehicle license plate from OCR text. Return only "
+            "recovered fields: plate_number (letters and digits only — drop "
+            "spaces and separators, e.g. 'ABC-1234' becomes 'ABC1234'), "
+            "issuing_region (the standard country or state code when one "
+            "exists — 'NEW YORK' becomes 'NY' — else the printed name). "
+        ),
+        "mrz": (
+            "Extract ICAO 9303 MRZ fields from OCR (TD1 3x30, TD2 2x36, TD3 "
+            "2x44). Lines hold A-Z, 0-9, and '<' filler. TD3 line 1: document "
+            "code (2 chars, e.g. 'P<'), issuer (3 letters), then the name. "
+            "Line 2: document number (9 chars, '<'-padded) + check digit, "
+            "nationality (3 letters), birth YYMMDD + check digit, sex, expiry "
+            "YYMMDD + check digit, optional data + check digit. TD1 and TD2 "
+            "pack the same fields into shorter lines (TD1 puts the document "
+            "number on line 1 and personal number on line 2). Names: '<<' "
+            "separates surname from given_names, single '<' is a space — "
+            "'DOE<<JOHN<PAUL' gives surname 'DOE', given_names 'JOHN PAUL'. "
+            "Keep every letter of the names as printed. "
+            "Strip trailing '<' fillers from document_number and names. Dates: "
+            "birth in the most recent century that does not put it after today "
+            "('850102' gives 1985-01-02); expiry always 20YY ('271231' gives "
+            "2027-12-31). sex is M, F, or X ('<' in the sex position means X). "
+            "Return only recovered fields: document_code, issuer, "
+            "document_number, nationality, surname, given_names, birth_date, "
+            "sex, expiry_date. Never emit check digits or optional/"
+            "personal-number data. "
+        )
+        + _MRZ_BOUNDARIES,
+    }
+)
 
 
 def _common_rules(today: date) -> str:

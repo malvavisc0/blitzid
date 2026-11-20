@@ -21,8 +21,10 @@ Pure functions over already-parsed records: no models, no I/O.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from types import MappingProxyType
 from typing import Literal
 
 from blitzid._dates import parse_date
@@ -48,20 +50,24 @@ _COMPARED_FIELDS = (
     "sex",
 )
 
-_PRINTED_ALIASES: dict[str, tuple[str, ...]] = {
-    "date_of_birth": ("date_of_birth", "birth_date"),
-    "date_of_expiry": ("date_of_expiry", "expiry_date"),
-}
+_PRINTED_ALIASES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "date_of_birth": ("date_of_birth", "birth_date"),
+        "date_of_expiry": ("date_of_expiry", "expiry_date"),
+    }
+)
 
-_MRZ_FIELDS: dict[str, str] = {
-    "date_of_birth": "birth_date",
-    "date_of_expiry": "expiry_date",
-}
+_MRZ_FIELDS: Mapping[str, str] = MappingProxyType(
+    {
+        "date_of_birth": "birth_date",
+        "date_of_expiry": "expiry_date",
+    }
+)
 
 _NAME_FIELDS = frozenset({"surname", "given_names"})
 
 _BAND_TOLERANCE = 10
-_PHOTO_SEXES = {"Male": "M", "Female": "F"}
+_PHOTO_SEXES: Mapping[str, str] = MappingProxyType({"Male": "M", "Female": "F"})
 
 
 def _photo_rows(

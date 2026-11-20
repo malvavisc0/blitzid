@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from blitzid.exceptions import ModelError
+from blitzid.exceptions import FaceVerificationError, ModelError
 
 SFACE_MODEL_FILENAME = "sface_2021dec.onnx"
 SFACE_MODEL_URL = (
@@ -87,9 +87,13 @@ def align_face(
 
     Returns:
         The aligned 112x112 face crop.
+
+    Raises:
+        FaceVerificationError: If the landmark count does not match the
+            five-point template.
     """
     if len(landmarks) != len(SFACE_TEMPLATE):
-        raise ValueError(
+        raise FaceVerificationError(
             f"Expected {len(SFACE_TEMPLATE)} landmarks, got {len(landmarks)}"
         )
     src = np.asarray(landmarks, dtype=np.float32)

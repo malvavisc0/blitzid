@@ -681,7 +681,10 @@ Defined in [`exceptions.py`](src/blitzid/exceptions.py).
 | `BarcodeError` | PDF417 barcode not found, malformed, or failed AAMVA validation |
 | `FaceVerificationError` | Face verification failure (no detectable face, missing landmarks) |
 
-Backward-compatibility aliases (`FaceDetectorError`, `ModelDownloadError`, `ImageLoadError`, etc.) are re-exported from `__init__.py`.
+Backward-compatibility aliases, re-exported from `__init__.py`:
+`FaceDetectorError` and `InvalidParameterError` alias `BlitzIDError`;
+`ModelDownloadError` aliases `ModelError`; `ImageLoadError` and
+`ImageProcessingError` alias `ImageError`.
 
 ## Architecture
 

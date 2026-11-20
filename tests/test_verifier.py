@@ -94,7 +94,7 @@ class TestAlignFace:
 
     def test_wrong_landmark_count_raises(self) -> None:
         img = np.zeros((200, 200, 3), dtype=np.uint8)
-        with pytest.raises(ValueError, match="landmarks"):
+        with pytest.raises(FaceVerificationError, match="landmarks"):
             align_face(img, _LANDMARKS[:4])
 
 

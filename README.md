@@ -36,10 +36,11 @@ Langfuse instance you choose.
   not validate raises `MRZError` naming the failing field, so a
   wrong-but-plausible document number never comes back from a fuzzy
   "correction".
-- **CPU is the target, not a fallback.** The provider is pinned to
-  `CPUExecutionProvider`; there is nothing to install for accelerators
-  and nothing to fall back from. What runs on your laptop runs the same
-  in a container.
+- **CPU is the target, not a fallback.** Every built-in engine is CPU:
+  OpenCV DNN for YuNet/SFace and onnxruntime's `CPUExecutionProvider`
+  for PP-OCR and the attribute/anti-spoof classifiers. There is nothing
+  to install for accelerators and nothing to fall back from. What runs
+  on your laptop runs the same in a container.
 - **Ships as a service.** The same analyses come up as an HTTP job
   queue with `docker compose up`, with a synchronous document-QC
   endpoint in front of them.
@@ -392,8 +393,7 @@ by the upload cap times the queue and TTL windows. Knobs live in
 `BLITZID_API_MAX_QUEUED_JOBS`, `BLITZID_API_MAX_CONCURRENT_JOBS`,
 `BLITZID_API_JOB_LEASE_SECONDS`). Every `v*` tag push publishes
 `ghcr.io/malvavisc0/blitzid` (amd64), gated on the full CI gate plus a
-compose smoke test; new GHCR packages are private by default, so make
-the package public or `docker login ghcr.io` to pull.
+compose smoke test. The GHCR package is public.
 
 ## API reference
 

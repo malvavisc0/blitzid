@@ -6,10 +6,14 @@ weights (downloaded on first use) and the YuNet detector.
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import cv2
 import numpy as np
+import pytest
+from onnxruntime.capi.onnxruntime_pybind11_state import RuntimeException
 
-from blitzid import AntiSpoofReader, AntiSpoofResult
+from blitzid import AntiSpoofReader, AntiSpoofResult, Face, ModelError
 from blitzid.face._antispoof import ANTISPOOF_INPUT_SIZE, to_blob
 
 
@@ -51,3 +55,27 @@ class TestReader:
         faces = reader.detector.detect_face_landmarks(img)
         assert reader.read_faces(img, faces) == reader.read(img)
         assert reader.read_faces(img, []) == []
+
+    def test_backend_failure_raises_model_error(self) -> None:
+        reader = object.__new__(AntiSpoofReader)
+        reader.session = Mock()
+        reader.session.run.side_effect = RuntimeException("inference failed")
+        reader._input_name = "input"
+        face = Face(bbox=(10, 10, 50, 50), confidence=0.9)
+        with pytest.raises(ModelError, match="MiniFASNet inference failed"):
+            reader.read_faces(
+                np.zeros((100, 100, 3), dtype=np.uint8),
+                [face],
+            )
+
+    def test_malformed_backend_output_raises_model_error(self) -> None:
+        reader = object.__new__(AntiSpoofReader)
+        reader.session = Mock()
+        reader.session.run.return_value = []
+        reader._input_name = "input"
+        face = Face(bbox=(10, 10, 50, 50), confidence=0.9)
+        with pytest.raises(ModelError, match="MiniFASNet inference failed"):
+            reader.read_faces(
+                np.zeros((100, 100, 3), dtype=np.uint8),
+                [face],
+            )

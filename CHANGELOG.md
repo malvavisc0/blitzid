@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-20
+
+### Fixed
+
+- Face verification fails closed on non-finite recognizer output instead
+  of treating it as a perfect match. OpenCV/ONNX inference exceptions
+  and malformed FairFace/MiniFASNet outputs are normalized to package
+  errors, preserving API section isolation.
+- Document corner ordering preserves all four corners for symmetric
+  quads, ID-3 QC uses the standard 125×88 aspect ratio, palette/BGRA
+  images preserve channel colors, and malformed array shapes fail early.
+- Concurrent model downloads use independent temporary files and atomic
+  replacement. Non-finite scale factors and failed visualization writes
+  now raise package errors instead of leaking backend exceptions.
+- TD1/TD2 extended document numbers reconstruct the complete value,
+  exclude the overflow's trailing check digit, and verify that check;
+  TD3 no longer treats personal/optional data as document-number
+  overflow or accepts an unsupported filler document-number check.
+- Date coercion requires exact supported formats and adds day-first
+  slash dates. Date-named structured fields reject malformed values,
+  and native structured output requests a strict JSON schema.
+- AAMVA parsing rejects malformed-width dates, duplicate or malformed
+  elements, and empty legacy given names.
+- Consistency reports with no usable comparison evidence are no longer
+  marked consistent. Unavailable individual rows still do not invalidate
+  other usable evidence.
+- Visual-zone filtering removes only a validated MRZ group, preserving
+  grouped printed serials and headings. Pinned face selection favors
+  contained faces, shared successful or failed work runs once per job,
+  and upload reads stop at the configured cap plus one byte.
+- Expired queue entries no longer consume capacity. Full-queue pruning
+  batches payload checks, status reads prune only the requested expired
+  registry member instead of the whole registry on every poll, and lease
+  requeue watches per-job claim/payload and queue keys—not the shared
+  processing list—while retaining duplicate-recovery protection.
+
+### Documentation
+
+- Clarified multipart temporary-file spooling, geometric-only liveness
+  limits, health-check semantics, and usable-evidence requirements for
+  `consistent: true`.
+
 ## [0.4.1] - 2026-11-20
 
 ### Fixed
@@ -408,3 +450,17 @@ All notable changes to this project will be documented in this file.
   call sites (`list_annotation_paths_recursively`, `calculate_intersect_area`,
   `get_bbox_inside_image`).
 - `FaceDetectorDNN.backend_type` compat alias (superseded by `backend`).
+
+[Unreleased]: https://github.com/malvavisc0/blitzid/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/malvavisc0/blitzid/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/malvavisc0/blitzid/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/malvavisc0/blitzid/compare/v0.3.6...v0.4.0
+[0.3.6]: https://github.com/malvavisc0/blitzid/compare/v0.3.5...v0.3.6
+[0.3.5]: https://github.com/malvavisc0/blitzid/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/malvavisc0/blitzid/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/malvavisc0/blitzid/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/malvavisc0/blitzid/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/malvavisc0/blitzid/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/malvavisc0/blitzid/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/malvavisc0/blitzid/compare/v0.1.0...v0.2.1
+[0.1.0]: https://github.com/malvavisc0/blitzid/releases/tag/v0.1.0

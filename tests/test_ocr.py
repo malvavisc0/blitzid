@@ -113,3 +113,11 @@ class TestReadSpecimen:
         reader = _stub_reader(det_only_engine)
         with pytest.raises(ModelError, match="partial"):
             reader.read(SPECIMEN)
+
+    def test_inference_failure_raises_model_error(self) -> None:
+        def failing_engine(img: object) -> object:
+            raise RuntimeError("inference failed")
+
+        reader = _stub_reader(failing_engine)
+        with pytest.raises(ModelError, match="RapidOCR inference failed"):
+            reader.read(SPECIMEN)

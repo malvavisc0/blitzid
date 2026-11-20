@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,6 +40,19 @@ class _FakeResponse:
 
     def __exit__(self, *args: object) -> None:
         return None
+
+
+class _BarrierResponse(_FakeResponse):
+    """Synchronize two downloads after each has opened its temp file."""
+
+    def __init__(self, payload: bytes, barrier: Barrier) -> None:
+        super().__init__(payload)
+        self._barrier = barrier
+
+    def read(self, size: int = -1) -> bytes:
+        if self._payload:
+            self._barrier.wait(timeout=5)
+        return super().read(size)
 
 
 class TestDefaultModelDir:
@@ -98,6 +113,35 @@ class TestModelManager:
 
         assert list(tmp_path.glob("*.tmp")) == []
         assert not mgr.model_path.exists()
+
+    def test_concurrent_downloads_use_independent_temp_files(
+        self, tmp_path: Path
+    ) -> None:
+        payload = b"weights"
+        digest = hashlib.sha256(payload).hexdigest()
+        managers = [
+            ModelManager(
+                tmp_path,
+                logger,
+                filename="shared.onnx",
+                url="https://example.com/shared.onnx",
+                sha256=digest,
+            )
+            for _ in range(2)
+        ]
+        barrier = Barrier(2)
+
+        def response(_request: object, timeout: float) -> _BarrierResponse:
+            return _BarrierResponse(payload, barrier)
+
+        with (
+            patch("blitzid._models.urllib.request.urlopen", side_effect=response),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            list(pool.map(lambda manager: manager._download_model(), managers))
+
+        assert (tmp_path / "shared.onnx").read_bytes() == payload
+        assert list(tmp_path.glob("*.tmp")) == []
 
     def test_load_session_success(self, tmp_path: Path) -> None:
         """Session is created on the explicit CPU provider."""

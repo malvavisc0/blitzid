@@ -107,6 +107,15 @@ class TestDateCoercion:
         field = ExtractedField(name="registration_date", value="01.05.2034")
         assert field.value == date(2034, 5, 1)
 
+    def test_slash_date_coerced_day_first(self) -> None:
+        field = ExtractedField(name="birth_date", value="12/08/1965")
+        assert field.value == date(1965, 8, 12)
+
+    @pytest.mark.parametrize("value", ["31.02.2024", "1121999", "not-a-date"])
+    def test_invalid_date_is_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="Invalid date value"):
+            ExtractedField(name="birth_date", value=value)
+
     def test_plain_text_stays_text(self) -> None:
         field = ExtractedField(name="document_number", value="L898902C")
         assert field.value == "L898902C"
@@ -246,8 +255,11 @@ class TestRead:
         import httpx2
 
         barrier = Barrier(2)
+        response_formats: list[dict[str, object]] = []
 
         def respond(request: httpx2.Request) -> httpx2.Response:
+            body = json.loads(request.content)
+            response_formats.append(body["response_format"])
             barrier.wait(timeout=5)
             content = json.dumps(
                 {
@@ -301,6 +313,11 @@ class TestRead:
         ]
         assert len(clients) == 2
         assert all(client.is_closed for client in clients)
+        assert len(response_formats) == 2
+        for response_format in response_formats:
+            assert response_format["json_schema"]["strict"] is True
+            schema = response_format["json_schema"]["schema"]
+            assert "raw_text" not in schema["properties"]
 
 
 class TestConfiguration:

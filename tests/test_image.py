@@ -116,7 +116,7 @@ class TestNormalizeChannels:
         assert len(result.shape) == 3
         assert result.shape[2] == 3
 
-    def test_rgba_to_bgr(self) -> None:
+    def test_bgra_to_bgr(self) -> None:
         rgba = np.zeros((100, 100, 4), dtype=np.uint8)
         result = _normalize_channels(rgba)
         assert len(result.shape) == 3
@@ -133,6 +133,16 @@ class TestNormalizeChannels:
         result = _normalize_channels(bgr)
         assert result.shape[2] == 3
         np.testing.assert_array_equal(result[10, 10], [1, 2, 3])
+
+    def test_bgra_preserves_channel_order(self) -> None:
+        bgra = np.zeros((100, 100, 4), dtype=np.uint8)
+        bgra[10, 10] = [1, 2, 3, 255]
+        result = _normalize_channels(bgra)
+        np.testing.assert_array_equal(result[10, 10], [1, 2, 3])
+
+    def test_extra_dimensions_raise(self) -> None:
+        with pytest.raises(ImageError, match="Unsupported image shape"):
+            _normalize_channels(np.zeros((100, 100, 3, 1), dtype=np.uint8))
 
 
 class TestLoadFromPath:
@@ -183,3 +193,22 @@ class TestLoadFromPil:
         assert isinstance(result, np.ndarray)
         assert len(result.shape) == 3
         assert result.shape[2] == 3
+
+    def test_palette_pil_uses_palette_colors(self) -> None:
+        from PIL import Image as PILImage
+
+        from blitzid._image import _load_from_pil
+
+        pil_img = PILImage.new("P", (100, 100))
+        pil_img.putpalette([255, 0, 0] + [0] * 765)
+        result = _load_from_pil(pil_img)
+        np.testing.assert_array_equal(result[0, 0], [0, 0, 255])
+
+    def test_rgba_pil_converts_to_bgr(self) -> None:
+        from PIL import Image as PILImage
+
+        from blitzid._image import _load_from_pil
+
+        pil_img = PILImage.new("RGBA", (100, 100), color=(10, 20, 30, 40))
+        result = _load_from_pil(pil_img)
+        np.testing.assert_array_equal(result[0, 0], [30, 20, 10])

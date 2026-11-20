@@ -217,13 +217,16 @@ class FaceAttributeReader:
     ) -> FaceAttributes:
         """Run the three heads for one face crop."""
         blob = to_blob(img, bbox)
-        results = self.session.run(None, {self._input_name: blob})
-        race_logits = results[self._head_order[0]]
-        gender_logits = results[self._head_order[1]]
-        age_logits = results[self._head_order[2]]
-        race, race_score = _winning(RACES, race_logits[0])
-        gender, gender_score = _winning(GENDERS, gender_logits[0])
-        age, age_score = _winning(AGE_GROUPS, age_logits[0])
+        try:
+            results = self.session.run(None, {self._input_name: blob})
+            race_logits = results[self._head_order[0]]
+            gender_logits = results[self._head_order[1]]
+            age_logits = results[self._head_order[2]]
+            race, race_score = _winning(RACES, race_logits[0])
+            gender, gender_score = _winning(GENDERS, gender_logits[0])
+            age, age_score = _winning(AGE_GROUPS, age_logits[0])
+        except Exception as exc:
+            raise ModelError(f"FairFace inference failed: {exc}") from exc
         return FaceAttributes(
             bbox=bbox,
             confidence=confidence,

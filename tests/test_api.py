@@ -53,7 +53,7 @@ import redis
 from fastapi.testclient import TestClient
 
 from blitzid.api._analyze import Engines, _printed_texts
-from blitzid.api._app import ApiConfig, _Workers, create_app
+from blitzid.api._app import ApiConfig, _pick_face, _Workers, create_app
 from blitzid.api._jobs import (
     CLAIM_PREFIX,
     JOB_PREFIX,
@@ -1045,14 +1045,14 @@ class TestCrop:
 class TestPrintedTexts:
     """The visual-zone filter must drop code-strip lines, keep everything else."""
 
-    def _line(self, text: str) -> OCRText:
-        return OCRText(bbox=(0, 0, 10, 10), text=text, confidence=0.9)
+    def _line(self, text: str, y: int = 0) -> OCRText:
+        return OCRText(bbox=(0, y, 10, 10), text=text, confidence=0.9)
 
     def test_drops_mrz_lines(self) -> None:
         lines = [
-            self._line("I<NLDSPECI20142999999990<<<<<8"),
-            self._line("6503101F2403096NLD<<<<<<<<<<<8"),
-            self._line("DE<BRUIJN<<WILLEKE<LISELOTTE<<"),
+            self._line("I<NLDSPECI20142999999990<<<<<8", y=0),
+            self._line("6503101F2403096NLD<<<<<<<<<<<8", y=30),
+            self._line("DE<BRUIJN<<WILLEKE<LISELOTTE<<", y=60),
         ]
         assert _printed_texts(lines) == []
 
@@ -1071,6 +1071,30 @@ class TestPrintedTexts:
         assert [t.text for t in _printed_texts([self._line("999999990")])] == [
             "999999990"
         ]
+
+    def test_keeps_long_printed_identifier(self) -> None:
+        line = self._line("ABCDEFGHIJKLMNOP")
+        assert _printed_texts([line]) == [line]
+
+    def test_keeps_document_heading(self) -> None:
+        line = self._line("PERSONALAUSWEIS")
+        assert _printed_texts([line]) == [line]
+
+    def test_drops_mrz_lines_with_ocr_spaces(self) -> None:
+        lines = [
+            self._line("I<NLD SPECI20142999999990<<<<<8", y=0),
+            self._line("6503101F2403096NLD<<<<<<<<<<<8", y=30),
+            self._line("DE<BRUIJN<<WILLEKE<LISELOTTE<<", y=60),
+        ]
+        assert _printed_texts(lines) == []
+
+    def test_keeps_grouped_printed_serial_at_mrz_length(self) -> None:
+        line = self._line("ABCDEFGHIJKLMNOPQRSTUVWXYZ 1234")
+        assert _printed_texts([line]) == [line]
+
+    def test_keeps_incomplete_mrz_candidate(self) -> None:
+        line = self._line("I<NLDSPECI20142999999990<<<<<8")
+        assert _printed_texts([line]) == [line]
 
 
 class TestStructuredJob:
@@ -1437,6 +1461,24 @@ class TestConsistencyJob:
         assert engines.attribute_reader.calls == 1
         assert engines.antispoof_reader.calls == 1
 
+    def test_sections_share_failed_ocr_work(self) -> None:
+        engines = _stub_engines(ocr_texts=ModelError("OCR failed"))
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="ocr,mrz,structured")
+            body = _poll_done(client, response.json()["job_id"])
+        assert engines.ocr_reader.calls == 1
+        assert engines.structured_reader.calls == 0
+        assert body["ocr"]["error"] == "OCR failed"
+        assert body["mrz"]["error"] == "OCR failed"
+        assert body["structured"]["error"] == "OCR failed"
+
+    def test_sections_share_failed_llm_work(self) -> None:
+        engines = _stub_engines(structured=ModelError("LLM failed"))
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = _submit(client, types="structured,consistency")
+            _poll_done(client, response.json()["job_id"])
+        assert engines.structured_reader.calls == 1
+
     def test_mismatch_flips_consistent(self) -> None:
         record = StructuredOCR(
             document_type="id",
@@ -1552,6 +1594,12 @@ class TestVerify:
         engines = _stub_engines(verification=FaceVerificationError("alignment failed"))
         with _client(store=MemoryJobStore(), engines=engines) as client:
             assert self._verify(client).status_code == 422
+
+    def test_pin_prefers_contained_face_over_large_peripheral_face(self) -> None:
+        contained = Face(bbox=(10, 10, 10, 10), confidence=0.9)
+        peripheral = Face(bbox=(90, 0, 100, 100), confidence=0.8)
+        selected = _pick_face([contained, peripheral], (0, 0, 100, 100), "image1")
+        assert selected is contained
 
     def test_pinned_bbox_selects_overlapping_face(self) -> None:
         engines = _stub_engines(faces=[_face(), _ghost_face()])
@@ -1744,14 +1792,85 @@ class TestRedisJobStore:
         assert snapshot.result == {"state": "done"}
         assert store.get("a").status == "gone"
 
+    def test_concurrent_result_reads_have_one_winner(self) -> None:
+        store = self._store()
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        store.write_result("a", claimed.token, {"state": "done"})
+        barrier = Barrier(8)
+        snapshots: list[JobSnapshot] = []
+
+        def read_result() -> None:
+            barrier.wait()
+            snapshots.append(store.get("a"))
+
+        threads = [Thread(target=read_result) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert [snapshot.status for snapshot in snapshots].count("done") == 1
+        assert [snapshot.status for snapshot in snapshots].count("gone") == 7
+
     def test_unknown_id_missing(self) -> None:
         assert self._store().get("nope").status == "missing"
+
+    def test_idle_read_prunes_expired_submission_registry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = self._store(ttl_seconds=1)
+        monkeypatch.setattr("blitzid.api._jobs.time.time", lambda: 1000.0)
+        self._submit(store, "a")
+        store._redis.delete("blitzid:status:a")
+        monkeypatch.setattr("blitzid.api._jobs.time.time", lambda: 1002.1)
+        assert store.get("a").status == "missing"
+
+    def test_active_read_does_not_prune_global_registry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = self._store()
+        self._submit(store, "a")
+        prune = Mock()
+        monkeypatch.setattr(store._redis, "zremrangebyscore", prune)
+        assert store.get("a").status == "queued"
+        prune.assert_not_called()
 
     def test_max_queued_raises(self) -> None:
         store = self._store(max_queued=1)
         self._submit(store, "a")
         with pytest.raises(QueueFullError, match="queue is full"):
             self._submit(store, "b")
+
+    def test_expired_queue_entry_does_not_consume_capacity(self) -> None:
+        store = self._store(max_queued=1)
+        self._submit(store, "expired")
+        store._redis.delete(JOB_PREFIX + "expired")
+        self._submit(store, "fresh")
+        assert store._redis.lrange(QUEUE_KEY, 0, -1) == [b"fresh"]
+
+    def test_below_cap_does_not_scan_for_expired_queue_ids(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = self._store(max_queued=2)
+        prune = Mock()
+        monkeypatch.setattr(store, "_prune_expired_queue_entries", prune)
+        self._submit(store, "a")
+        prune.assert_not_called()
+
+    def test_full_queue_prune_batches_payload_checks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = self._store(max_queued=1)
+        self._submit(store, "expired")
+        store._redis.delete(JOB_PREFIX + "expired")
+        monkeypatch.setattr(
+            store._redis,
+            "exists",
+            Mock(side_effect=AssertionError("unbatched Redis EXISTS call")),
+        )
+        self._submit(store, "fresh")
+        assert store.get("fresh").status == "queued"
 
     def test_concurrent_submits_respect_cap(self) -> None:
         store = self._store(max_queued=5)
@@ -1857,6 +1976,43 @@ class TestRedisJobStore:
         with pytest.raises(StaleClaimError):
             store.write_result("a", "imposter-token", {"state": "done"})
         assert store.get("a").status == "running"
+
+    def test_requeue_does_not_watch_global_processing_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = self._store()
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        store._redis.delete(CLAIM_PREFIX + "a")
+        original_pipeline = store._redis.pipeline
+        watched: list[str] = []
+
+        def recording_pipeline() -> Any:
+            pipe = original_pipeline()
+            original_watch = pipe.watch
+
+            def record_watch(*keys: str) -> Any:
+                watched.extend(keys)
+                return original_watch(*keys)
+
+            pipe.watch = record_watch
+            return pipe
+
+        monkeypatch.setattr(store._redis, "pipeline", recording_pipeline)
+        assert store.sweep() == 1
+        assert PROCESSING_KEY not in watched
+        assert store.get("a").status == "queued"
+
+    def test_requeue_ignores_id_already_removed_from_processing(self) -> None:
+        store = self._store()
+        self._submit(store, "a")
+        claimed = store.claim()
+        assert claimed is not None
+        store._redis.delete(CLAIM_PREFIX + "a")
+        store._redis.lrem(PROCESSING_KEY, 0, "a")
+        assert store.sweep() == 0
+        assert store._redis.lrange(QUEUE_KEY, 0, -1) == []
 
     def test_sweep_requeues_expired_leases_only(self) -> None:
         store = self._store()

@@ -113,10 +113,14 @@ def normalize_embedding(
     """Flatten a raw model output to an L2-normalized float32 embedding.
 
     Raises:
-        ModelError: If the model produced a zero-norm embedding.
+        ModelError: If the model produced a non-finite or zero-norm embedding.
     """
     flat = np.asarray(vec, dtype=np.float32).flatten()
+    if not np.all(np.isfinite(flat)):
+        raise ModelError("Model produced a non-finite embedding")
     norm = np.float32(np.linalg.norm(flat))
+    if not np.isfinite(norm):
+        raise ModelError("Model produced a non-finite embedding norm")
     if norm == 0.0:
         raise ModelError("Model produced a zero-norm embedding")
     flat /= norm

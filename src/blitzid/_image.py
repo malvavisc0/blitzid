@@ -103,19 +103,18 @@ def _load_from_array(array: np.ndarray, logger: logging.Logger) -> np.ndarray:
 
 
 def _load_from_pil(pil_image: PILImageType) -> np.ndarray:
-    """Convert PIL Image to numpy array (BGR)."""
+    """Convert PIL Image to numpy array (BGR), honoring its color mode."""
+    if pil_image.mode not in {"1", "L", "RGB", "RGBA"}:
+        pil_image = pil_image.convert("RGB")
     img_array = np.array(pil_image)
     if img_array.size == 0:
         raise ImageError("PIL Image is empty")
 
-    if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-        img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    elif len(img_array.shape) == 2:
-        img = _normalize_channels(img_array)
-    else:
-        img = img_array
-
-    return img
+    if img_array.ndim == 2:
+        return cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+    if img_array.shape[2] == 3:
+        return cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    return cv2.cvtColor(img_array, cv2.COLOR_RGBA2BGR)
 
 
 def _validate_image(img: np.ndarray) -> None:
@@ -147,12 +146,14 @@ def _normalize_channels(img: np.ndarray) -> np.ndarray:
         if channels == 1:
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         elif channels == 4:
-            img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         elif channels != 3:
             raise ImageError(
                 f"Unsupported number of channels: {channels}. "
                 "Expected 1, 3, or 4 channels."
             )
+    else:
+        raise ImageError(f"Unsupported image shape: {img.shape}")
     return img
 
 

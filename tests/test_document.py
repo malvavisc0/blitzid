@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from blitzid import BlitzIDError, DocumentCropper, Face, FaceDetectorDNN
+from blitzid.reading.document import _check_aspect_ratio, _order_corners
 
 _FIXTURES = Path(__file__).parent.parent / "images"
 
@@ -36,6 +37,12 @@ def _face() -> Face:
 
 
 class TestQuadDetection:
+    def test_symmetric_quad_keeps_all_four_corners(self) -> None:
+        points = np.array([[50, 10], [90, 50], [50, 90], [10, 50]])
+        ordered = _order_corners(points)
+        assert ordered == ((50, 10), (90, 50), (50, 90), (10, 50))
+        assert len(set(ordered)) == 4
+
     def test_document_found_with_matching_aspect(
         self, synthetic_document: Callable[..., np.ndarray]
     ) -> None:
@@ -93,6 +100,10 @@ class TestQuadDetection:
 
 
 class TestQualityChecks:
+    def test_id3_aspect_ratio_uses_standard_dimensions(self) -> None:
+        crop = np.zeros((1000, 1200, 3), dtype=np.uint8)
+        assert _check_aspect_ratio(crop) == "warn"
+
     def test_sharpness_and_brightness_share_grayscale_after_face_check(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -125,7 +125,10 @@ class RapidOCRReader:
         from rapidocr.utils.output import RapidOCROutput
 
         img = load_image(image_input, self.logger)
-        result = self.engine(img)
+        try:
+            result = self.engine(img)
+        except Exception as exc:
+            raise ModelError(f"RapidOCR inference failed: {exc}") from exc
         if not isinstance(result, RapidOCROutput):
             raise ModelError(
                 f"RapidOCR returned a {type(result).__name__} (partial "

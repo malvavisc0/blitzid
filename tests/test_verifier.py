@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
+from unittest.mock import Mock
 
 import cv2
 import numpy as np
@@ -110,6 +111,11 @@ class TestNormalizeEmbedding:
         with pytest.raises(ModelError, match="zero-norm"):
             normalize_embedding(np.zeros((1, 4), dtype=np.float32))
 
+    @pytest.mark.parametrize("bad_value", [np.nan, np.inf, -np.inf])
+    def test_non_finite_vector_raises(self, bad_value: float) -> None:
+        with pytest.raises(ModelError, match="non-finite"):
+            normalize_embedding(np.array([bad_value, 1.0], dtype=np.float32))
+
 
 class TestSimilarity:
     def test_identical_vectors(self) -> None:
@@ -129,6 +135,15 @@ class TestSimilarity:
         a = np.zeros(SFACE_EMBEDDING_DIM, dtype=np.float32)
         b = np.zeros(256, dtype=np.float32)
         with pytest.raises(FaceVerificationError, match="shape mismatch"):
+            FaceVerifier.similarity(a, b)
+
+    @pytest.mark.parametrize("bad_value", [np.nan, np.inf, -np.inf])
+    def test_non_finite_embedding_never_becomes_perfect_match(
+        self, bad_value: float
+    ) -> None:
+        a = np.array([bad_value], dtype=np.float32)
+        b = np.ones(1, dtype=np.float32)
+        with pytest.raises(FaceVerificationError, match="finite"):
             FaceVerifier.similarity(a, b)
 
 
@@ -182,6 +197,17 @@ class TestEmbed:
         face = Face(bbox=(0, 0, 50, 50), confidence=0.9)
         with pytest.raises(FaceVerificationError, match="landmarks"):
             verifier.embed(specimen_image, face)
+
+    def test_backend_failure_raises_model_error(
+        self, specimen_image: np.ndarray
+    ) -> None:
+        verifier = object.__new__(FaceVerifier)
+        verifier._recognizer = Mock(
+            feature=Mock(side_effect=cv2.error("inference failed"))
+        )
+        face = Face(bbox=(0, 0, 112, 112), confidence=0.9, landmarks=_LANDMARKS)
+        with pytest.raises(ModelError, match="SFace inference failed"):
+            verifier._embed_face(specimen_image, face)
 
 
 class TestVerify:

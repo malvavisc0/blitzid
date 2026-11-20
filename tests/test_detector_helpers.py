@@ -165,6 +165,11 @@ class TestNormalizeScales:
         with pytest.raises(BlitzIDError, match="scales"):
             _normalize_scales((0.5, 1.0))
 
+    @pytest.mark.parametrize("scale", [np.nan, np.inf, -np.inf])
+    def test_non_finite_raises(self, scale: float) -> None:
+        with pytest.raises(BlitzIDError, match="scales"):
+            _normalize_scales((scale,))
+
 
 class TestDrawDetections:
     def test_returns_copy_same_shape(self) -> None:

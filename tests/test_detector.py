@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
+import cv2
 import numpy as np
 import pytest
 
-from blitzid.exceptions import BlitzIDError
+from blitzid.exceptions import BlitzIDError, ModelError
 from blitzid.face.detector import DetectionMetrics, Face, FaceDetectorDNN
 
 SYNTHETIC_IMAGE = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -176,6 +178,15 @@ class TestVisualize:
             assert out.exists()
             assert out.stat().st_size > 0
 
+    def test_failed_save_raises(
+        self, detector: FaceDetectorDNN, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("blitzid.face.detector.cv2.imwrite", lambda *_args: False)
+        with pytest.raises(BlitzIDError, match="Could not save visualization"):
+            detector.visualize_detections(
+                SYNTHETIC_IMAGE, faces=[], output_path=Path("unused.png")
+            )
+
 
 class TestBatchDetection:
     def test_returns_dict_keyed_by_path(self, detector: FaceDetectorDNN) -> None:
@@ -218,6 +229,14 @@ class TestMultiScale:
 
 
 class TestDetectionMetrics:
+    def test_backend_failure_raises_model_error(self) -> None:
+        detector = object.__new__(FaceDetectorDNN)
+        detector.det_size = (640, 640)
+        detector._detector = Mock()
+        detector._detector.detect.side_effect = cv2.error("inference failed")
+        with pytest.raises(ModelError, match="YuNet inference failed"):
+            detector._run_detection(SYNTHETIC_IMAGE)
+
     def test_all_fields_populated(self, detector: FaceDetectorDNN) -> None:
         _assert_valid_metrics(detector.detect_face_with_metrics(SYNTHETIC_IMAGE))
 

@@ -218,9 +218,9 @@ class ConsistencyReport:
         photo_comparisons: The photo-vs-document rows (age, sex),
             always both of them; ``unavailable`` when no photo
             attributes were supplied.
-        consistent: False when any row in either block is a mismatch.
-            Partial matches stay visible in the rows but leave this
-            flag true.
+        consistent: False when any row in either block is a mismatch or
+            when there is no usable comparison evidence. Partial matches
+            stay visible in the rows but leave this flag true.
     """
 
     comparisons: tuple[FieldComparison, ...]
@@ -271,9 +271,9 @@ def cross_check(
             )
         )
     photo_rows = _photo_rows(photo, mrz, printed, today)
-    clean = all(row.verdict != "mismatch" for row in rows) and all(
-        row.verdict != "mismatch" for row in photo_rows
-    )
+    all_rows: tuple[FieldComparison | PhotoComparison, ...] = (*rows, *photo_rows)
+    evidence = any(row.verdict in {"match", "partial"} for row in all_rows)
+    clean = evidence and all(row.verdict != "mismatch" for row in all_rows)
     return ConsistencyReport(
         comparisons=tuple(rows),
         photo_comparisons=tuple(photo_rows),

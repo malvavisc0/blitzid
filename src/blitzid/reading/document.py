@@ -52,7 +52,7 @@ __all__ = ["DocumentCropper", "QualityReport"]
 CheckResult = Literal["pass", "warn", "fail", "n/a"]
 
 ID1_ASPECT_RATIO = 1.585
-ID3_ASPECT_RATIO = 1.389
+ID3_ASPECT_RATIO = 125 / 88
 ASPECT_PASS_TOLERANCE = 0.15
 ASPECT_WARN_TOLERANCE = 0.35
 RESOLUTION_PASS_PX = 600
@@ -102,16 +102,20 @@ class QualityReport:
 
 
 def _order_corners(points: np.ndarray) -> tuple[tuple[int, int], ...]:
-    """Order quad corners clockwise from top-left."""
+    """Order every convex quad corner clockwise from top-left."""
     pts = points.reshape(4, 2).astype(np.float64)
-    sums = pts.sum(axis=1)
-    diffs = pts[:, 1] - pts[:, 0]
-    ordered = (
-        pts[np.argmin(sums)],
-        pts[np.argmin(diffs)],
-        pts[np.argmax(sums)],
-        pts[np.argmax(diffs)],
+    center = pts.mean(axis=0)
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    cyclic = pts[np.argsort(angles)]
+    start = min(
+        range(4),
+        key=lambda index: (
+            float(cyclic[index].sum()),
+            float(cyclic[index][1]),
+            float(cyclic[index][0]),
+        ),
     )
+    ordered = np.roll(cyclic, -start, axis=0)
     return tuple((round(x), round(y)) for x, y in ordered)
 
 

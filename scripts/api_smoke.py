@@ -299,6 +299,7 @@ def _check_antispoof_job(client: TestClient) -> None:
 def _check_liveness_session(
     client: TestClient, files: dict[str, tuple[str, bytes, str]], action: str
 ) -> None:
+    """Check geometric motion only; resized stills are not a PAD test."""
     response = client.post("/api/liveness/challenge")
     assert response.status_code == 200, response.text
     challenge = response.json()

@@ -166,8 +166,12 @@ def _names(version: str, elements: Mapping[str, str]) -> tuple[str, str, str]:
     family = _field(elements, "DCS", "family name")
     middle = _optional(elements, "DAD") or ""
     if version in _LEGACY_GIVEN:
-        parts = _field(elements, "DCT", "given name").split(",")
+        parts = [
+            part.strip() for part in _field(elements, "DCT", "given name").split(",")
+        ]
         given = parts[0]
+        if not given:
+            raise BarcodeError("missing given name (DCT)")
         if not middle and len(parts) > 1:
             middle = ",".join(parts[1:])
     else:
@@ -181,8 +185,11 @@ def _parse_subfile(text: str, offset: int, length: int) -> Mapping[str, str]:
     elements: dict[str, str] = {}
     for line in body.split("\n"):
         if len(line) < 3:
-            continue
-        elements[line[:3]] = line[3:].rstrip("\r")
+            raise BarcodeError(f"malformed AAMVA element: {line!r}")
+        tag = line[:3]
+        if tag in elements:
+            raise BarcodeError(f"duplicate AAMVA element: {tag}")
+        elements[tag] = line[3:].rstrip("\r")
     return MappingProxyType(elements)
 
 

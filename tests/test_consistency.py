@@ -88,6 +88,20 @@ class TestVerdicts:
         assert _verdicts(report) == dict.fromkeys(_verdicts(report), "match")
         assert report.consistent is True
 
+    def test_no_evidence_is_not_consistent(self) -> None:
+        report = cross_check(StructuredOCR(), _mrz(), today=_TODAY)
+        assert set(_verdicts(report).values()) == {"unavailable"}
+        assert report.consistent is False
+
+    def test_extended_document_number_matches_full_printed_value(self) -> None:
+        values = dict(_MATCHING, document_number="D23145890123")
+        report = cross_check(
+            _structured(**values),
+            _mrz(document_number="D23145890123", optional_data1="1233"),
+            today=_TODAY,
+        )
+        assert _verdicts(report)["document_number"] == "match"
+
     def test_row_keeps_both_sides_and_confidence(self) -> None:
         report = cross_check(_structured(**_MATCHING), _mrz(), today=_TODAY)
         birth = report.comparisons[1]
@@ -175,10 +189,10 @@ class TestDates:
         )
         assert _verdicts(report)["date_of_expiry"] == "match"
 
-    def test_unparseable_printed_date_is_unavailable(self) -> None:
+    def test_unparseable_printed_date_is_rejected_at_schema_boundary(self) -> None:
         values = dict(_MATCHING, date_of_birth="sometime in spring")
-        report = cross_check(_structured(**values), _mrz(), today=_TODAY)
-        assert _verdicts(report)["date_of_birth"] == "unavailable"
+        with pytest.raises(ValueError, match="Invalid date value"):
+            _structured(**values)
 
     @pytest.mark.parametrize(
         ("field", "alias"),

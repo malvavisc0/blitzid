@@ -392,6 +392,17 @@ def _overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> int:
     return width * height
 
 
+def _pin_score(face: Face, pinned: tuple[int, int, int, int]) -> tuple[float, float]:
+    """Rank pin coverage, then IoU, without favoring large peripheral faces."""
+    intersection = _overlap(face.bbox, pinned)
+    if intersection == 0:
+        return 0.0, 0.0
+    face_area = face.bbox[2] * face.bbox[3]
+    pinned_area = pinned[2] * pinned[3]
+    union = face_area + pinned_area - intersection
+    return intersection / min(face_area, pinned_area), intersection / union
+
+
 def _pick_face(
     faces: list[Face], pinned: tuple[int, int, int, int] | None, image: str
 ) -> Face:
@@ -404,7 +415,7 @@ def _pick_face(
         raise FaceVerificationError(f"No face detected in {image}")
     if pinned is None:
         return max(faces, key=lambda f: f.confidence)
-    best = max(faces, key=lambda f: _overlap(f.bbox, pinned))
+    best = max(faces, key=lambda f: _pin_score(f, pinned))
     if _overlap(best.bbox, pinned) <= 0:
         raise FaceVerificationError(f"No face found in the pinned region of {image}")
     return best
@@ -489,8 +500,9 @@ def _register_routes(app: FastAPI) -> None:
         """Submit an analysis job (async-only queue)."""
         analysis_types = _parse_types(types or [])
         _ensure_engines(analysis_types, request.app.state.engines)
-        data = image.file.read()
-        validate_image_upload(data, request.app.state.config.max_upload_bytes)
+        max_bytes = request.app.state.config.max_upload_bytes
+        data = image.file.read(max_bytes + 1)
+        validate_image_upload(data, max_bytes)
         job_id = uuid.uuid4().hex
         _submit_safely(request.app.state.store, job_id, data, analysis_types)
         return JobCreated(
@@ -517,8 +529,9 @@ def _register_routes(app: FastAPI) -> None:
         """QC a document upload and return the canonical perspective crop."""
         if side not in _SIDES:
             raise HTTPException(422, "side must be one of: front, back, unknown")
-        data = image.file.read()
-        img = validate_image_upload(data, request.app.state.config.max_upload_bytes)
+        max_bytes = request.app.state.config.max_upload_bytes
+        data = image.file.read(max_bytes + 1)
+        img = validate_image_upload(data, max_bytes)
         crop, report = request.app.state.cropper.crop(img, side)
         return CropResponse(
             quad=[list(point) for point in report.quad] if report.quad else None,
@@ -553,8 +566,12 @@ def _register_routes(app: FastAPI) -> None:
         pinned1 = _parse_bbox(face1_bbox, "face1_bbox")
         pinned2 = _parse_bbox(face2_bbox, "face2_bbox")
         config: ApiConfig = request.app.state.config
-        img1 = validate_image_upload(image1.file.read(), config.max_upload_bytes)
-        img2 = validate_image_upload(image2.file.read(), config.max_upload_bytes)
+        img1 = validate_image_upload(
+            image1.file.read(config.max_upload_bytes + 1), config.max_upload_bytes
+        )
+        img2 = validate_image_upload(
+            image2.file.read(config.max_upload_bytes + 1), config.max_upload_bytes
+        )
         with engines.detector_lock:
             faces1 = engines.detector.detect_face_landmarks(img1)
             faces2 = engines.detector.detect_face_landmarks(img2)
@@ -606,7 +623,9 @@ def _register_routes(app: FastAPI) -> None:
             raise HTTPException(410, "challenge unknown, expired, or already used")
         config: ApiConfig = request.app.state.config
         frames = [
-            validate_image_upload(upload.file.read(), config.max_upload_bytes)
+            validate_image_upload(
+                upload.file.read(config.max_upload_bytes + 1), config.max_upload_bytes
+            )
             for upload in (frame1, frame2, frame3)
         ]
         start = time.perf_counter()

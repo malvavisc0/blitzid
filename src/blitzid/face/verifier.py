@@ -187,13 +187,18 @@ class FaceVerifier:
         """Cosine similarity between two :meth:`embed` outputs.
 
         Raises:
-            FaceVerificationError: If the embeddings differ in length.
+            FaceVerificationError: If the embeddings differ in length or contain
+                non-finite values.
         """
         if embedding1.shape != embedding2.shape:
             raise FaceVerificationError(
                 f"Embedding shape mismatch: {embedding1.shape} vs {embedding2.shape}"
             )
+        if not np.all(np.isfinite(embedding1)) or not np.all(np.isfinite(embedding2)):
+            raise FaceVerificationError("Embeddings must contain only finite values")
         score = float(np.dot(embedding1, embedding2))
+        if not np.isfinite(score):
+            raise FaceVerificationError("Embedding similarity must be finite")
         return max(-1.0, min(1.0, score))
 
     def _embed_face(
@@ -209,7 +214,11 @@ class FaceVerifier:
                 "detect_face_landmarks"
             )
         aligned = align_face(img, face.landmarks)
-        feature = np.asarray(self._recognizer.feature(aligned), dtype=np.float32)
+        try:
+            raw_feature = self._recognizer.feature(aligned)
+        except cv2.error as exc:
+            raise ModelError(f"SFace inference failed: {exc}") from exc
+        feature = np.asarray(raw_feature, dtype=np.float32)
         return normalize_embedding(feature)
 
     def _compare(

@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 
 from blitzid._image import ImageInput, crop_with_padding, load_image
 from blitzid._models import ModelManager, default_model_dir
-from blitzid.exceptions import BlitzIDError
+from blitzid.exceptions import BlitzIDError, ModelError
 from blitzid.face._face import (
     DetectionMetrics,
     Face,
@@ -86,8 +86,8 @@ def _normalize_scales(scales: tuple[float, ...]) -> tuple[float, ...]:
     The values are used exactly as given: passing ``scales=(1.5,)`` runs
     only the 1.5 pass, not a hidden 1.0 pass.
     """
-    if not scales or any(s < 1.0 for s in scales):
-        raise BlitzIDError("scales must be non-empty with values >= 1.0")
+    if not scales or any(not np.isfinite(s) or s < 1.0 for s in scales):
+        raise BlitzIDError("scales must be non-empty with finite values >= 1.0")
     return tuple(sorted(set(scales)))
 
 
@@ -347,7 +347,14 @@ class FaceDetectorDNN:
         result = draw_detections(img, faces, show_confidence, color, thickness)
 
         if output_path:
-            cv2.imwrite(str(output_path), result)
+            try:
+                saved = cv2.imwrite(str(output_path), result)
+            except cv2.error as exc:
+                raise BlitzIDError(
+                    f"Could not save visualization to {output_path}: {exc}"
+                ) from exc
+            if not saved:
+                raise BlitzIDError(f"Could not save visualization to {output_path}")
             self.logger.info("Visualization saved to %s", output_path)
 
         return result
@@ -404,8 +411,11 @@ class FaceDetectorDNN:
         h, w = img.shape[:2]
         size = self.det_size if det_size is None else det_size
         letterboxed, scale = letterbox_image(img, size)
-        self._detector.setInputSize(size)
-        _, raw_faces = self._detector.detect(letterboxed)
+        try:
+            self._detector.setInputSize(size)
+            _, raw_faces = self._detector.detect(letterboxed)
+        except cv2.error as exc:
+            raise ModelError(f"YuNet inference failed: {exc}") from exc
         faces = None if raw_faces is None else np.asarray(raw_faces, dtype=np.float32)
         return map_yunet_faces(faces, scale, (w, h))
 

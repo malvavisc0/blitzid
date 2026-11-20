@@ -35,15 +35,15 @@ TD3 = [
     "P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<",
     "L898902C36UTO7408122F1204159ZE184226B<<<<<10",
 ]
-# ICAO extended-number zones: the number is longer than its field, the
-# check position holds "<" (no printed check digit), and the overflow
-# sits at the start of the optional-data field.
+# TD1 extended-number zone: the primary check position holds '<', then
+# overflow 123 and full-number check 3 start optional data. TD3 has no
+# extended-document-number form, so its corresponding vector is invalid.
 TD1_EXTENDED = [
-    "I<UTOD23145890<1234<<<<<<<<<<<",
-    "7408122F1204159UTO<<<<<<<<<<<5",
+    "I<UTOD23145890<1233<<<<<<<<<<<",
+    "7408122F1204159UTO<<<<<<<<<<<2",
     "ERIKSSON<<ANNA<MARIA<<<<<<<<<<",
 ]
-TD3_EXTENDED = [
+TD3_INVALID_EXTENDED = [
     "P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<",
     "L898902C3<UTO7408122F12041596D<<<<<<<<<<<<18",
 ]
@@ -295,23 +295,49 @@ class TestParse:
         with pytest.raises(MRZError, match="TD3 document number"):
             _parse(bad)
 
-    def test_extended_document_number_accepted(self) -> None:
-        """Numbers longer than the field print no check digit ('<')."""
+    def test_td1_extended_document_number_accepted(self) -> None:
         record = _parse(TD1_EXTENDED)
-        assert record.document_number == "D23145890"
-        assert record.optional_data1.startswith("1234")
+        assert record.document_number == "D23145890123"
+        assert record.optional_data1.startswith("1233")
 
-    def test_extended_document_number_td3_accepted(self) -> None:
-        record = _parse(TD3_EXTENDED)
-        assert record.document_number == "L898902C3"
-        assert record.optional_data1.startswith("6D")
+    def test_td2_extended_document_number_accepted(self) -> None:
+        body = "D23145890<UTO7408122F12041591233<<<"
+        composite_text = body[:10] + body[13:20] + body[21:28] + body[28:35]
+        record = _parse([TD2[0], body + str(_check_digit(composite_text))])
+        assert record.document_number == "D23145890123"
+        assert record.optional_data1 == "1233<<<"
+
+    def test_td3_extended_document_number_rejected(self) -> None:
+        with pytest.raises(MRZError, match="TD3 document number"):
+            _parse(TD3_INVALID_EXTENDED)
 
     def test_extended_document_number_composite_still_gates(self) -> None:
-        """Corrupting the overflow must fail the composite check."""
-        line = TD1_EXTENDED[0]
-        bad = [line[:18] + "5" + line[19:], TD1_EXTENDED[1], TD1_EXTENDED[2]]
+        """Corrupting the second optional field fails the composite check."""
+        line = TD1_EXTENDED[1]
+        bad = [TD1_EXTENDED[0], line[:18] + "5" + line[19:], TD1_EXTENDED[2]]
         with pytest.raises(MRZError, match="TD1 composite"):
             _parse(bad)
+
+    def test_extended_document_number_check_is_verified(self) -> None:
+        line = TD1_EXTENDED[0][:18] + "9" + TD1_EXTENDED[0][19:]
+        base = TD1_EXTENDED[1][:-1]
+        composite = line[5:30] + base[0:7] + base[8:15] + base[18:29]
+        with pytest.raises(MRZError, match="TD1 document number"):
+            _parse([line, base + str(_check_digit(composite)), TD1_EXTENDED[2]])
+
+    @pytest.mark.parametrize("suffix", ["<" * 15, "3" + "<" * 14])
+    def test_extended_form_requires_overflow_and_check(self, suffix: str) -> None:
+        line = TD1_EXTENDED[0][:15] + suffix
+        base = TD1_EXTENDED[1][:-1]
+        composite = line[5:30] + base[0:7] + base[8:15] + base[18:29]
+        with pytest.raises(MRZError, match="requires overflow and a check digit"):
+            _parse([line, base + str(_check_digit(composite)), TD1_EXTENDED[2]])
+
+    def test_td3_document_check_filler_rejected(self) -> None:
+        base = TD3[1][:9] + "<" + TD3[1][10:-1]
+        composite = base[:10] + base[13:20] + base[21:28] + base[28:43]
+        with pytest.raises(MRZError, match="TD3 document number"):
+            _parse([TD3[0], base + str(_check_digit(composite))])
 
     def test_bad_composite_check_digit(self) -> None:
         bad = [TD3[0], TD3[1][:-1] + "1"]

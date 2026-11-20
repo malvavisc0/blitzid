@@ -18,11 +18,12 @@ single-digit milliseconds per image on a laptop, and the weights
 Structured extraction calls an OpenAI-compatible endpoint you choose; a
 local CPU server is enough, so a GPU remains optional. Faces, ID
 photos, and document scans are biometric PII, so the built-in pipeline
-never sends them anywhere. All built-in inference runs in your process,
-and the optional HTTP API keeps uploads and results in RAM only.
+never sends them anywhere. All built-in inference runs in your process.
 Structured extraction sends only the OCR text to the endpoint you
 configure, and optional Langfuse tracing exports those spans to the
-Langfuse instance you choose.
+Langfuse instance you choose. After HTTP parsing, job payloads and
+results stay in RAM-only Redis; Starlette may spool multipart uploads
+over 1 MiB through temporary files before the endpoint receives them.
 
 ## Why blitzid
 
@@ -383,10 +384,12 @@ release images, `null` when unspecified). OpenAPI reports the same package
 version. Engine flags indicate initialization, not an inference or LLM
 connectivity check.
 
-Privacy: uploads and results live in RAM end to end. Job payloads are
-stored as raw image bytes (never base64-inflated), Redis runs with
-persistence disabled, results are claim-once and TTL-bounded, and the
-service itself never writes to disk. Worst-case Redis memory is bounded
+Privacy: after HTTP parsing, job payloads and results live in RAM. They
+are stored as raw image bytes (never base64-inflated), Redis runs with
+persistence disabled, and results are claim-once and TTL-bounded.
+Starlette may spool multipart uploads over 1 MiB through temporary
+files before the endpoint receives them; those files are removed when
+the request ends. Worst-case Redis memory is bounded
 by the upload cap times the queue and TTL windows. Knobs live in
 [`.env.example`](.env.example) (`BLITZID_API_REDIS_URL`,
 `BLITZID_API_MAX_UPLOAD_MB`, `BLITZID_API_JOB_TTL_SECONDS`,
@@ -516,8 +519,9 @@ Compares one document's two data copies and its portrait photo.
 **`ConsistencyReport`** — frozen dataclass: `comparisons` (printed
 text vs code strip, one `FieldComparison` per field), `photo_comparisons`
 (two `PhotoComparison` rows: `age` and `sex`), and `consistent` (false
-on any outright mismatch). Every row keeps both values and the model's
-confidence.
+on any outright mismatch or when no comparison has usable evidence).
+Unavailable individual rows do not invalidate other usable evidence.
+Every row keeps both values and the model's confidence.
 
 ### `AntiSpoofReader`
 

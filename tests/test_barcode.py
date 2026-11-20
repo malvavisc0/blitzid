@@ -68,7 +68,8 @@ def _elements(version: str, **overrides: str) -> list[tuple[str, str]]:
         ("DAU", overrides.pop("height", "069 in")),
         ("DCA", "D"),
     ]
-    tags.extend((tag, value) for tag, value in overrides.items())
+    tags = [(tag, overrides.pop(tag, value)) for tag, value in tags]
+    tags.extend(overrides.items())
     return tags
 
 
@@ -397,6 +398,32 @@ class TestParseValidation:
         elements = [tag for tag in _elements("08") if tag[0] != "DAC"]
         with pytest.raises(BarcodeError, match="missing given name"):
             _parse_aamva(_payload("08", elements=elements))
+
+    @pytest.mark.parametrize("version", ["02", "03"])
+    def test_legacy_empty_given_name(self, version: str) -> None:
+        payload = _payload(version, elements=_elements(version, given=",QUINCY"))
+        with pytest.raises(BarcodeError, match="missing given name"):
+            _parse_aamva(payload)
+
+    @pytest.mark.parametrize("tag", ["DBB", "DBD", "DBA"])
+    def test_non_padded_date_width_rejected(self, tag: str) -> None:
+        elements = [
+            (key, "1121999" if key == tag else value) for key, value in _elements("08")
+        ]
+        with pytest.raises(BarcodeError, match=rf"invalid .*\({tag}\)"):
+            _parse_aamva(_payload("08", elements=elements))
+
+    def test_duplicate_element_rejected(self) -> None:
+        elements = [*_elements("08"), ("DCS", "DIFFERENT")]
+        with pytest.raises(BarcodeError, match="duplicate AAMVA element: DCS"):
+            _parse_aamva(_payload("08", elements=elements))
+
+    def test_short_malformed_element_rejected(self) -> None:
+        body = "\n".join(f"{tag}{value}" for tag, value in _elements("08"))
+        body = body.replace("DCSPUBLIC", "DCSPUBLIC\nXX", 1)
+        payload = _assemble("08", "636014", "00", [("DL", body)])
+        with pytest.raises(BarcodeError, match="malformed AAMVA element"):
+            _parse_aamva(payload)
 
     def test_missing_birth_date(self) -> None:
         elements = [tag for tag in _elements("08") if tag[0] != "DBB"]

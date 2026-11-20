@@ -8,7 +8,6 @@ detections, and ``mrz`` parses the ``ocr`` section's text lines.
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -20,7 +19,7 @@ import numpy as np
 
 from blitzid._image import crop_with_padding
 from blitzid.api._upload import decode_image_bytes, dims_within_bounds, encode_jpeg_b64
-from blitzid.exceptions import BlitzIDError, ModelError
+from blitzid.exceptions import BlitzIDError, ModelError, MRZError
 from blitzid.face._antispoof import AntiSpoofReader
 from blitzid.face._attributes import FaceAttributeReader, FaceAttributes
 from blitzid.face._face import Face
@@ -28,16 +27,17 @@ from blitzid.face.detector import FaceDetectorDNN
 from blitzid.face.verifier import FaceVerifier
 from blitzid.reading.barcode import BarcodeReader, _record_dict
 from blitzid.reading.consistency import cross_check
-from blitzid.reading.mrz import MRZReader, MRZRecord
+from blitzid.reading.mrz import (
+    MRZReader,
+    MRZRecord,
+    _normalize_mrz_line,
+    _parse,
+    _select_mrz_lines,
+)
 from blitzid.reading.ocr import OCRText, RapidOCRReader
 from blitzid.reading.structurize import StructuredOCR, StructuredOCRReader
 
 FACE_CROP_PADDING = 0.2
-
-# A machine-readable code-strip line: 15+ characters of only A-Z, 0-9
-# and '<' with no spaces (TD1 3x30, TD2 2x36, TD3 2x44). Visual-zone
-# lines carry words, separators, or shorter values, so they never match.
-_MRZ_LINE = re.compile(r"[A-Za-z0-9<]{15,}")
 
 
 @dataclass
@@ -107,10 +107,16 @@ def _run_section(
 
 
 def _memoized[T](memo: dict[str, Any], key: str, load: Callable[[], T]) -> T:
-    """Compute one shared per-job value at most once."""
+    """Compute one shared per-job value or failure at most once."""
     if key not in memo:
-        memo[key] = load()
-    return cast(T, memo[key])
+        try:
+            memo[key] = load()
+        except BlitzIDError as error:
+            memo[key] = error
+    value = memo[key]
+    if isinstance(value, BlitzIDError):
+        raise value
+    return cast(T, value)
 
 
 def _face_item(img: np.ndarray, face: Face) -> dict[str, Any]:
@@ -200,14 +206,23 @@ def _read_structured(
 
 
 def _printed_texts(texts: list[OCRText]) -> list[OCRText]:
-    """Keep the visual zone's lines, dropping machine-readable code-strip lines.
+    """Keep visual-zone lines, excluding only a validated code-strip group.
 
-    The code strip (lines of A-Z, 0-9 and '<') is parsed deterministically
-    by the ``mrz`` reader; fed to the visual-zone LLM extraction it makes
-    the model glue code-strip values into printed fields (e.g. appending
-    the MRZ's personal number to ``document_number``).
+    Shape matching alone can discard grouped printed serials and headings.
+    Feeding a validated MRZ to the visual-zone LLM, however, makes the
+    model glue code-strip values into printed fields.
     """
-    return [text for text in texts if not _MRZ_LINE.fullmatch(text.text)]
+    machine_lines: set[str] = set()
+    for lines in _select_mrz_lines(texts):
+        try:
+            _parse(lines)
+        except MRZError:
+            continue
+        machine_lines.update(lines)
+        break
+    return [
+        text for text in texts if _normalize_mrz_line(text.text) not in machine_lines
+    ]
 
 
 def _run_face(

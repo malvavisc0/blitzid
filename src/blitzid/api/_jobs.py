@@ -172,6 +172,8 @@ class RedisJobStore:
             redis.RedisError: If Redis is unreachable.
         """
         now = time.time()
+        if int(self._redis.llen(QUEUE_KEY)) >= self._max_queued:
+            self._prune_expired_queue_entries()
         with self._redis.pipeline() as pipe:
             while True:
                 try:
@@ -328,9 +330,13 @@ class RedisJobStore:
         status = self._redis.get(STATUS_PREFIX + job_id)
         if status is not None:
             return JobSnapshot(_text(status))
-        if self._redis.zscore(SUBMITTED_KEY, job_id) is not None:
-            return JobSnapshot("gone")
-        return JobSnapshot("missing")
+        submitted_at = self._redis.zscore(SUBMITTED_KEY, job_id)
+        if submitted_at is None:
+            return JobSnapshot("missing")
+        if submitted_at <= time.time() - 2 * self._ttl:
+            self._redis.zrem(SUBMITTED_KEY, job_id)
+            return JobSnapshot("missing")
+        return JobSnapshot("gone")
 
     def sweep(self) -> int:
         """Requeue processing jobs whose claim lease expired.
@@ -352,20 +358,25 @@ class RedisJobStore:
     def _requeue(self, job_id: str, now: float) -> bool:
         """Move an abandoned processing job back onto the queue.
 
-        Runs inside a watched transaction on the claim key and returns
-        False when the claim appears (or exists) — the job is not
-        abandoned after all. An id whose payload expired is retired
-        outright (processing entry and status cleared); a still-live
+        Per-job claim and payload keys plus the queue are watched, not
+        the shared processing list, so unrelated result writes cannot
+        abort recovery. A competing requeue still changes the queue or
+        removes the processing membership checked below.
+
+        An id whose payload expired is retired outright; a still-live
         payload is requeued unless the queue is at capacity, in which
-        case it stays in processing for a later sweep (requeues are
-        bounded by the processing list length).
+        case it stays in processing for a later sweep.
         """
         claim_key = CLAIM_PREFIX + job_id
+        job_key = JOB_PREFIX + job_id
         with self._redis.pipeline() as pipe:
             while True:
                 try:
-                    pipe.watch(claim_key, QUEUE_KEY)  # type: ignore[no-untyped-call]
+                    pipe.watch(claim_key, job_key, QUEUE_KEY)  # type: ignore[no-untyped-call]
                     if pipe.get(claim_key) is not None:
+                        pipe.unwatch()
+                        return False
+                    if pipe.lpos(PROCESSING_KEY, job_id) is None:
                         pipe.unwatch()
                         return False
                     payload_expired = int(pipe.hlen(JOB_PREFIX + job_id)) == 0
@@ -389,6 +400,29 @@ class RedisJobStore:
                     return True
                 except redis.WatchError:
                     continue
+
+    def _prune_expired_queue_entries(self) -> None:
+        """Batch expired-ID checks when raw queue capacity is reached."""
+        job_ids = [_text(raw_id) for raw_id in self._redis.lrange(QUEUE_KEY, 0, -1)]
+        if not job_ids:
+            return
+        with self._redis.pipeline(transaction=False) as pipe:
+            for job_id in job_ids:
+                pipe.exists(JOB_PREFIX + job_id)
+            present = pipe.execute()
+        expired = [
+            job_id
+            for job_id, payload_exists in zip(job_ids, present, strict=True)
+            if not payload_exists
+        ]
+        if not expired:
+            return
+        with self._redis.pipeline() as pipe:
+            pipe.multi()
+            for job_id in expired:
+                pipe.lrem(QUEUE_KEY, 0, job_id)
+                pipe.delete(STATUS_PREFIX + job_id)
+            pipe.execute()
 
     def _prune_registry(self, pipe: Any, now: float) -> None:
         """Prune the submission registry to its 2x-TTL grace window."""

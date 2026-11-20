@@ -15,6 +15,7 @@ import hashlib
 import logging
 import os
 import urllib.request
+import uuid
 from pathlib import Path
 
 import onnxruntime as ort  # type: ignore[import-untyped]
@@ -134,9 +135,9 @@ class ModelManager:
     def _download_model(self) -> None:
         """Download the model file.
 
-        Streams to a ``.tmp`` file, verifies it against the pinned
-        digest, and renames into place on success, so a partial or
-        corrupted download never masquerades as a valid model.
+        Streams to a unique ``.tmp`` file, verifies it against the pinned
+        digest, and atomically renames it into place on success, so
+        concurrent downloaders cannot corrupt each other's output.
 
         Raises:
             ModelError: If the download or digest verification fails.
@@ -146,7 +147,7 @@ class ModelManager:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; blitzid)"}
 
         self.logger.info("Downloading %s...", path.name)
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         try:
             req = urllib.request.Request(url, headers=headers)
             with (

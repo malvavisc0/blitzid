@@ -238,6 +238,7 @@ class ExtractedField(BaseModel):
                 parsed = parse_date(value)
                 if isinstance(parsed, date):
                     return {**dict(data), "value": parsed}
+                raise ValueError(f"Invalid date value for {name}: {value!r}")
         return data
 
 
@@ -481,6 +482,7 @@ class StructuredOCRReader:
                     Extraction,
                     name="structured_ocr",
                     description="Structured fields extracted from document OCR text.",
+                    strict=True,
                 ),
                 system_prompt=_system_prompt(kind, today),
                 model_settings=ModelSettings(timeout=self.timeout),

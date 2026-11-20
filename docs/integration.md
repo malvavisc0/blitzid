@@ -252,7 +252,7 @@ values come back normalized enough to compare directly.
 | `200` from `/api/crop`, `verdict: pass` | Card found, sharp, bright | Keep the crop; analyze the crop |
 | `200` from `/api/crop`, `verdict: warn` | Usable, one weak check | Continue and lower your confidence in the data |
 | Job `status: done` | One section per requested type | Store the body now; the next read is `410 Gone` |
-| `consistent: true` | Printed text, code strip, and portrait agree | Continue to the selfie match |
+| `consistent: true` | At least one comparison is usable and none outright mismatches | Review unavailable rows, then continue to the selfie match |
 | `200` from `/api/verify`, `verified: true` | Same person at your threshold | Accept; keep both crops as evidence |
 | `similarity` near your accept/reject edges | Borderline pair | Human review with both crops on screen |
 
@@ -293,10 +293,12 @@ Read this before you promise a flow:
   `consistency` section does not compare it against the printed front
   yet — the strongest tamper signal those cards have. It compares the
   code strip (when the card has one) today.
-- **Video replay and generated faces.** The liveness block stops
-  static spoofs and the `antispoof` block flags cameras pointed at
-  photos and displays. Filming a screen that plays a live video, or a
-  real-time deepfake, is beyond what these catch: that last mile is
+- **Replay, edited frames, and generated faces.** The liveness block checks
+  geometric motion only: digitally resizing a still portrait can satisfy
+  `move_closer`, and independently selected faces are not identity-matched
+  across frames. Require live camera capture in the client and do not treat
+  this endpoint alone as spoof resistance. The `antispoof` block is an
+  advisory second signal. Video replay and real-time deepfakes need
   certified presentation-attack detection (ISO 30107-3 SDKs such as
   iProov or FaceTec).
 - **Cross-document matching.** Step 7 is yours today.
@@ -312,9 +314,11 @@ Read this before you promise a flow:
 
 ## Data and privacy
 
-Uploads and results live in RAM end to end: jobs are raw image bytes in
-a Redis with persistence disabled, results are claim-once and
-TTL-bounded, and the service writes nothing to disk. Two boundaries to
+After HTTP parsing, jobs are raw image bytes in a Redis with persistence
+disabled, results are claim-once and TTL-bounded, and job data stays in
+RAM. Before the endpoint receives a request, Starlette may spool
+multipart uploads over 1 MiB through temporary files; they are removed
+when the request ends. Two further boundaries to
 choose deliberately: the `structured` and `consistency` analyses send
 OCR text to the endpoint named in `BLITZID_LLM_BASE_URL`, and tracing
 exports spans (including that text) to Langfuse when the `LANGFUSE_*`

@@ -112,19 +112,29 @@ def _verify(label: str, text: str, expected: str) -> None:
         )
 
 
-def _verify_document_number(label: str, text: str, expected: str) -> None:
-    """Verify the printed document-number check digit.
+def _verify_document_number(
+    label: str, text: str, expected: str, optional_data: str
+) -> str:
+    """Validate a document number and return its full logical value.
 
-    ICAO 9303: a number longer than its field puts the overflow at the
-    start of the optional-data field and fills the check position with
-    ``"<"`` — no check digit is printed, so none is required. The
-    composite check digit still covers the full number.
+    ICAO 9303 TD1/TD2: a number longer than its field puts overflow and
+    a full-number check digit at the start of optional data, and fills
+    the primary check position with ``"<"``. The returned value excludes
+    the check digit, which is verified against the reconstructed number.
 
     Raises:
-        MRZError: If the printed digit does not match the computed one.
+        MRZError: If either printed check does not match the computed one,
+            the filler form has no overflow, or the overflow has no check.
     """
-    if expected != "<":
-        _verify(label, text, expected)
+    if expected == "<":
+        extended = optional_data.rstrip("<")
+        if len(extended) < 2:
+            raise MRZError(f"{label} extended form requires overflow and a check digit")
+        full_number = text.rstrip("<") + extended[:-1]
+        _verify(label, full_number, extended[-1])
+        return full_number
+    _verify(label, text, expected)
+    return text.rstrip("<")
 
 
 def _fix_letters(code: str) -> str:
@@ -204,6 +214,11 @@ def _normalize_sex(sex: str) -> str:
     return "X" if sex == "<" else sex
 
 
+def _normalize_mrz_line(text: str) -> str:
+    """Normalize one OCR line for code-strip candidate matching."""
+    return text.replace(" ", "").upper()
+
+
 def _is_mrz_line(text: str) -> bool:
     """Whether *text* could be one MRZ line (charset, length, content)."""
     return (
@@ -225,7 +240,7 @@ def _select_mrz_lines(texts: list[OCRText]) -> Iterator[list[str]]:
     """
     candidates: list[tuple[int, str]] = []
     for text in texts:
-        line = text.text.replace(" ", "").upper()
+        line = _normalize_mrz_line(text.text)
         if _is_mrz_line(line):
             candidates.append((text.bbox[1], line))
     candidates.sort()
@@ -281,7 +296,9 @@ def _parse_td1(l1: str, l2: str, l3: str) -> MRZRecord:
     expiry_check = _fix_digits(l2[14])
     nationality = _verify_letters("TD1 nationality", l2[15:18])
     optional2 = l2[18:29]
-    _verify_document_number("TD1 document number", document_number, doc_check)
+    parsed_document_number = _verify_document_number(
+        "TD1 document number", document_number, doc_check, optional1
+    )
     _verify("TD1 birth date", birth_date, birth_check)
     _verify("TD1 expiry date", expiry_date, expiry_check)
     _verify(
@@ -301,7 +318,7 @@ def _parse_td1(l1: str, l2: str, l3: str) -> MRZRecord:
         mrz_type="TD1",
         document_code=code,
         issuer=issuer,
-        document_number=document_number.rstrip("<"),
+        document_number=parsed_document_number,
         birth_date=birth_date,
         sex=_normalize_sex(l2[7]),
         expiry_date=expiry_date,
@@ -325,7 +342,9 @@ def _parse_td2(l1: str, l2: str) -> MRZRecord:
     expiry_date = _verify_date("TD2 expiry date", l2[21:27])
     expiry_check = _fix_digits(l2[27])
     optional_data = l2[28:35]
-    _verify_document_number("TD2 document number", document_number, doc_check)
+    parsed_document_number = _verify_document_number(
+        "TD2 document number", document_number, doc_check, optional_data
+    )
     _verify("TD2 birth date", birth_date, birth_check)
     _verify("TD2 expiry date", expiry_date, expiry_check)
     _verify(
@@ -344,7 +363,7 @@ def _parse_td2(l1: str, l2: str) -> MRZRecord:
         mrz_type="TD2",
         document_code=code,
         issuer=issuer,
-        document_number=document_number.rstrip("<"),
+        document_number=parsed_document_number,
         birth_date=birth_date,
         sex=_normalize_sex(l2[20]),
         expiry_date=expiry_date,
@@ -368,7 +387,7 @@ def _parse_td3(l1: str, l2: str) -> MRZRecord:
     expiry_check = _fix_digits(l2[27])
     optional_data = l2[28:42]
     optional_check = _fix_digits(l2[42])
-    _verify_document_number("TD3 document number", document_number, doc_check)
+    _verify("TD3 document number", document_number, doc_check)
     _verify("TD3 birth date", birth_date, birth_check)
     _verify("TD3 expiry date", expiry_date, expiry_check)
     _verify("TD3 personal number", optional_data, optional_check)

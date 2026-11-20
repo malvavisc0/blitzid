@@ -34,10 +34,6 @@ __all__ = ["langfuse_tracing"]
 
 logger = logging.getLogger(__name__)
 
-LANGFUSE_PUBLIC_KEY_ENV = "LANGFUSE_PUBLIC_KEY"
-LANGFUSE_SECRET_KEY_ENV = "LANGFUSE_SECRET_KEY"
-LANGFUSE_BASE_URL_ENV = "LANGFUSE_BASE_URL"
-
 
 @functools.cache
 def langfuse_tracing() -> Langfuse | None:
@@ -51,8 +47,8 @@ def langfuse_tracing() -> Langfuse | None:
     Idempotent: the first call decides, later calls return the same
     client.
     """
-    public_key = os.environ.get(LANGFUSE_PUBLIC_KEY_ENV, "").strip()
-    secret_key = os.environ.get(LANGFUSE_SECRET_KEY_ENV, "").strip()
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
     if not public_key or not secret_key:
         return None
     try:
@@ -66,7 +62,7 @@ def langfuse_tracing() -> Langfuse | None:
     atexit.register(_flush, client)
     logger.info(
         "Langfuse tracing enabled (base URL: %s)",
-        os.environ.get(LANGFUSE_BASE_URL_ENV, "https://cloud.langfuse.com"),
+        os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
     )
     return client
 

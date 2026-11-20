@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
 __all__ = ["ExtractedField", "StructuredOCR", "StructuredOCRReader"]
 
+# Environment-variable names, not credential values.
 LLM_BASE_URL_ENV = "BLITZID_LLM_BASE_URL"
 LLM_API_KEY_ENV = "BLITZID_LLM_API_KEY"
 LLM_MODEL_ENV = "BLITZID_LLM_MODEL"

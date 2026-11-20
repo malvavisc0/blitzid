@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-20
+
+### Fixed
+
+- Model downloads reject non-HTTP(S) URL schemes before fetching, and the
+  MIDV-500 dataset helper applies the same check. A custom model URL can
+  no longer reach an unsupported `file:` or other scheme.
+
+### Documentation
+
+- Expanded the coding standard with an agent contract, verification gates,
+  clean-code/typing/testing rules, security/PII guidance, and source
+  references.
+- Corrected the contribution branch name to `master`.
+
 ## [0.4.2] - 2026-11-20
 
 ### Fixed
@@ -451,7 +466,8 @@ All notable changes to this project will be documented in this file.
   `get_bbox_inside_image`).
 - `FaceDetectorDNN.backend_type` compat alias (superseded by `backend`).
 
-[Unreleased]: https://github.com/malvavisc0/blitzid/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/malvavisc0/blitzid/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/malvavisc0/blitzid/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/malvavisc0/blitzid/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/malvavisc0/blitzid/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/malvavisc0/blitzid/compare/v0.3.6...v0.4.0

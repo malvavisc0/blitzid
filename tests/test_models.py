@@ -114,6 +114,12 @@ class TestModelManager:
         assert list(tmp_path.glob("*.tmp")) == []
         assert not mgr.model_path.exists()
 
+    def test_unsupported_url_scheme_rejected(self, tmp_path: Path) -> None:
+        mgr = ModelManager(tmp_path, logger, url="file:///tmp/model.onnx")
+        with pytest.raises(ModelError, match="Unsupported URL scheme"):
+            mgr._download_model()
+        assert not mgr.model_path.exists()
+
     def test_concurrent_downloads_use_independent_temp_files(
         self, tmp_path: Path
     ) -> None:

@@ -110,7 +110,7 @@ def compute_hash(img: np.ndarray) -> str:
     Shape and dtype are hashed alongside the pixel bytes so arrays that
     share byte content but differ in layout never collide on one key.
     """
-    digest = hashlib.md5()
+    digest = hashlib.md5(usedforsecurity=False)
     digest.update(img.tobytes())
     digest.update(repr((img.shape, img.dtype)).encode())
     return digest.hexdigest()

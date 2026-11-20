@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -29,8 +30,6 @@ from blitzid.face._yunet import (
 )
 
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
-
-MODELS_DIR_ENV = "BLITZID_MODELS_DIR"
 
 
 def session_options() -> ort.SessionOptions:
@@ -58,7 +57,7 @@ def default_model_dir(subdir: str | None = None) -> Path:
     Returns:
         Resolved :class:`~pathlib.Path` that is guaranteed to exist.
     """
-    env_dir = os.environ.get(MODELS_DIR_ENV)
+    env_dir = os.environ.get("BLITZID_MODELS_DIR")
     base = Path(env_dir) if env_dir else Path(user_cache_dir("blitzid")) / "models"
 
     if subdir:
@@ -140,10 +139,16 @@ class ModelManager:
         concurrent downloaders cannot corrupt each other's output.
 
         Raises:
-            ModelError: If the download or digest verification fails.
+            ModelError: If the download or digest verification fails, or the
+                URL scheme is unsupported.
         """
         path = self.model_path
         url = self.url
+        scheme = urllib.parse.urlparse(url).scheme.lower()
+        if scheme not in {"http", "https"}:
+            raise ModelError(
+                f"Unsupported URL scheme for {path.name}: {scheme or '<none>'}"
+            )
         headers = {"User-Agent": "Mozilla/5.0 (compatible; blitzid)"}
 
         self.logger.info("Downloading %s...", path.name)
@@ -151,7 +156,10 @@ class ModelManager:
         try:
             req = urllib.request.Request(url, headers=headers)
             with (
-                urllib.request.urlopen(req, timeout=self.download_timeout) as response,
+                # Scheme is validated above; only HTTP(S) reaches urlopen.
+                urllib.request.urlopen(  # nosec B310
+                    req, timeout=self.download_timeout
+                ) as response,
                 open(tmp_path, "wb") as out_file,
             ):
                 while True:

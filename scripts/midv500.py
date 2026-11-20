@@ -19,6 +19,7 @@ import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
 import cv2
@@ -27,8 +28,6 @@ from tqdm import tqdm
 
 from blitzid import FaceDetectorDNN
 from blitzid.exceptions import BlitzIDError
-
-# ── Download ─────────────────────────────────────────────────
 
 
 class TqdmUpTo(tqdm):  # type: ignore[type-arg]
@@ -44,6 +43,10 @@ class TqdmUpTo(tqdm):  # type: ignore[type-arg]
 def download(url: str, save_dir: str | Path) -> Path:
     """Download a file to `save_dir` and return the local path."""
 
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"Unsupported URL scheme for {url!r}: {scheme or '<none>'}")
+
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,7 +54,10 @@ def download(url: str, save_dir: str | Path) -> Path:
     out_path = save_dir / filename
 
     with TqdmUpTo(unit="B", unit_scale=True, miniters=1, desc=filename) as t:
-        urlretrieve(url, filename=str(out_path), reporthook=t.update_to, data=None)
+        # Scheme is validated above; only HTTP(S) reaches urlretrieve.
+        urlretrieve(  # nosec B310
+            url, filename=str(out_path), reporthook=t.update_to, data=None
+        )
 
     return out_path
 
@@ -207,9 +213,6 @@ def download_dataset(
 
         for link in links:
             _fetch_one(link, dst, skip_existing, cleanup_zip)
-
-
-# ── Face detection test ───────────────────────────────────────
 
 
 @dataclass
@@ -525,9 +528,6 @@ def run_face_test(
 
     _print_summary(set_roots, doc_roots, stats, save_faces, faces_dir)
     return 0 if not stats.failures else 1
-
-
-# ── CLI ──────────────────────────────────────────────────────
 
 
 def _build_download_parser(parser: argparse.ArgumentParser) -> None:

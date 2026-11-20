@@ -32,7 +32,7 @@ uvx vulture src/ tests/ scripts/ --min-confidence 60
 
 ## Pull request guidelines
 
-1. Fork the repo and create a feature branch from `main`.
+1. Fork the repo and create a feature branch from `master`.
 2. Ensure all checks pass (`ruff`, `mypy`, `pytest`).
 3. Add or update tests for any new functionality.
 4. Update `CHANGELOG.md` under `[Unreleased]`.

@@ -124,7 +124,7 @@ class TestCacheBehavior:
 
     def test_clear_cache_when_disabled(self) -> None:
         det = FaceDetectorDNN(enable_cache=False)
-        det.clear_cache()  # should not raise
+        det.clear_cache()
         assert det.get_cache_size() == 0
 
     def test_cache_eviction_behavior(self) -> None:
@@ -191,7 +191,6 @@ class TestVisualize:
 class TestBatchDetection:
     def test_returns_dict_keyed_by_path(self, detector: FaceDetectorDNN) -> None:
         with tempfile.TemporaryDirectory() as td:
-            # Create a small valid image
             import cv2
 
             img_path = Path(td) / "test.png"

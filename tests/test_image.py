@@ -95,7 +95,7 @@ class TestValidateImage:
 
     def test_exact_minimum_passes(self) -> None:
         arr = np.zeros((MIN_DIMENSION, MIN_DIMENSION, 3), dtype=np.uint8)
-        _validate_image(arr)  # should not raise
+        _validate_image(arr)
 
     def test_empty_2d_raises(self) -> None:
         arr = np.zeros((0, 100), dtype=np.uint8)

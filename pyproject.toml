@@ -1,6 +1,6 @@
 [project]
 name = "blitzid"
-version = "0.4.0"
+version = "0.4.1"
 description = "Modular DNN-based ID document reading framework (face detection, OCR, MRZ) optimized for CPU deployment"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -45,6 +45,8 @@ dependencies = [
     "langfuse",
     # PDF417 decoding for AAMVA driver's-license payloads.
     "zxing-cpp",
+    # Used by scripts/download_models.py to pre-fetch RapidOCR weights.
+    "omegaconf",
 ]
 
 # ── Optional dependency groups ─────────────────────────────

@@ -187,12 +187,13 @@ wheels = [
 
 [[package]]
 name = "blitzid"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpx2" },
     { name = "langfuse" },
     { name = "numpy" },
+    { name = "omegaconf" },
     { name = "onnxruntime" },
     { name = "opencv-python-headless" },
     { name = "platformdirs" },
@@ -253,6 +254,7 @@ requires-dist = [
     { name = "langfuse" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
+    { name = "omegaconf" },
     { name = "onnxruntime" },
     { name = "opencv-python-headless", specifier = ">=5" },
     { name = "platformdirs" },

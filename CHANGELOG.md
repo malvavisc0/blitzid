@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-20
+
+### Fixed
+
+- Docker images now bake all RapidOCR weights and make `/models`
+  writable by the runtime user. The production compose uses the baked
+  weights instead of mounting an empty named volume, so cold starts no
+  longer fail with `PermissionError: /models/rapidocr`.
+
 ## [0.4.0] - 2026-11-20
 
 ### Changed

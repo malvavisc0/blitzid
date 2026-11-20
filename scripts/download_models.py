@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
-from blitzid import RapidOCRReader
 from blitzid._models import ModelManager
 from blitzid.face._antispoof import (
     ANTISPOOF_MODEL_FILENAME,
@@ -108,9 +108,19 @@ def _download_antispoof(models_dir: Path) -> None:
 
 
 def _download_rapidocr(models_dir: Path) -> None:
-    """Download the RapidOCR text-reading weights."""
-    RapidOCRReader(model_dir=models_dir / "rapidocr")
-    print(f"RapidOCR models: {models_dir / 'rapidocr'}")
+    """Download every RapidOCR text-reading weight."""
+    from omegaconf import OmegaConf
+    from rapidocr.main import DEFAULT_CFG_PATH
+    from rapidocr.utils.download_models import download_models
+
+    target = models_dir / "rapidocr"
+    cfg = OmegaConf.load(DEFAULT_CFG_PATH)
+    cfg.Global.model_root_dir = str(target)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_path = Path(temp_dir) / "rapidocr.yaml"
+        OmegaConf.save(cfg, config_path)
+        download_models(config_path)
+    print(f"RapidOCR models: {target}")
 
 
 def main(argv: Iterable[str] | None = None) -> None:

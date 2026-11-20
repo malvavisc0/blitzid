@@ -26,7 +26,7 @@ Inputs are file paths, NumPy arrays, or PIL Images; outputs are
   (hatchling backend, src layout, `py.typed`)
 - core deps: numpy, onnxruntime (CPU), opencv-python-headless>=5,
   platformdirs, pydantic, rapidocr, pydantic-ai, httpx2, langfuse,
-  zxing-cpp
+  zxing-cpp, omegaconf
 - optional extras: `api` (fastapi, uvicorn, redis), `scripts` (tqdm),
   `dev` (pytest, ruff, mypy, pre-commit)
 - Type checker: **mypy** (`strict = true` in pyproject.toml)

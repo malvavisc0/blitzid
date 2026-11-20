@@ -27,7 +27,7 @@ ENV PATH=/app/.venv/bin:$PATH
 # Scripts reference fixtures via relative "images/" paths, and the
 # smoke tests run from the repo root.
 WORKDIR /app
-RUN useradd --create-home appuser
+RUN useradd --create-home appuser && chown -R appuser:appuser /models
 USER appuser
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

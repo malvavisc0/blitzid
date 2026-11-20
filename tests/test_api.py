@@ -401,9 +401,9 @@ def _verification() -> VerificationResult:
     return VerificationResult(
         verified=True,
         similarity=0.97,
-        threshold=0.4,
+        threshold=0.363,
         processing_time=0.123,
-        backend="ONNXRuntime",
+        backend="OpenCV DNN (SFace)",
     )
 
 
@@ -1499,9 +1499,9 @@ class TestVerify:
             body = response.json()
             assert body["verified"] is True
             assert body["similarity"] == pytest.approx(0.97)
-            assert body["threshold"] == pytest.approx(0.4)
+            assert body["threshold"] == pytest.approx(0.363)
             assert body["processing_time_ms"] == pytest.approx(123.0)
-            assert body["backend"] == "ONNXRuntime"
+            assert body["backend"] == "OpenCV DNN (SFace)"
 
     def test_verify_reports_face_evidence(self) -> None:
         engines = _stub_engines()
@@ -1518,9 +1518,9 @@ class TestVerify:
             verification=VerificationResult(
                 verified=True,
                 similarity=0.5,
-                threshold=0.4,
+                threshold=0.363,
                 processing_time=0.01,
-                backend="ONNXRuntime",
+                backend="OpenCV DNN (SFace)",
             )
         )
         with _client(store=MemoryJobStore(), engines=strict) as client:
@@ -1531,9 +1531,9 @@ class TestVerify:
             verification=VerificationResult(
                 verified=False,
                 similarity=0.3,
-                threshold=0.4,
+                threshold=0.363,
                 processing_time=0.01,
-                backend="ONNXRuntime",
+                backend="OpenCV DNN (SFace)",
             )
         )
         with _client(store=MemoryJobStore(), engines=lenient) as client:
@@ -1676,6 +1676,35 @@ class TestVerify:
             response = self._verify(client)
             assert response.status_code == 200
             assert detector.observed == [True, True]
+
+    def test_verify_holds_verifier_lock(self) -> None:
+        """/verify must serialize SFace access via the verifier lock."""
+
+        class _RecordingVerifier(_StubVerifier):
+            def __init__(self, result: VerificationResult, lock: Any) -> None:
+                super().__init__(result)
+                self._lock = lock
+                self.observed: list[bool] = []
+
+            def verify_faces(
+                self, image1: Any, face1: Any, image2: Any, face2: Any
+            ) -> VerificationResult:
+                self.observed.append(self._lock.locked())
+                return super().verify_faces(image1, face1, image2, face2)
+
+        stub = _stub_engines()
+        verifier = _RecordingVerifier(_verification(), stub.verifier_lock)
+        engines = Engines(
+            detector=stub.detector,
+            ocr_reader=stub.ocr_reader,
+            mrz_reader=stub.mrz_reader,
+            verifier=verifier,
+            verifier_lock=stub.verifier_lock,
+        )
+        with _client(store=MemoryJobStore(), engines=engines) as client:
+            response = self._verify(client)
+            assert response.status_code == 200
+            assert verifier.observed == [True]
 
 
 class TestRedisJobStore:
@@ -1887,7 +1916,6 @@ class TestRealEngines:
         not _INTEGRATION, reason="set BLITZID_OCR_INTEGRATION=1 to download models"
     )
     def test_specimen_full_pipeline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        pytest.importorskip("rapidocr")
         fixtures = Path(__file__).parent.parent / "images"
         specimen = fixtures / "nl_td1_id_specimen.jpg"
         ocr_reader = RapidOCRReader(log_level=logging.WARNING)

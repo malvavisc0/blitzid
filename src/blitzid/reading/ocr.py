@@ -1,8 +1,8 @@
 """RapidOCRReader — OCR text reading for ID documents.
 
 Runs RapidOCR (PP-OCR-derived ONNX models) on an onnxruntime CPU
-session — the same engine and deployment profile as the SCRFD
-detector. Requires the ``ocr`` extra (``pip install blitzid[ocr]``).
+session — the same CPU-only deployment profile as the face engines.
+RapidOCR is a required dependency of blitzid.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class RapidOCRReader:
         log_level: Logging level for the reader's logger.
 
     Raises:
-        BlitzIDError: If the ``ocr`` extra (rapidocr) is not installed.
+        BlitzIDError: If the rapidocr dependency is unavailable.
         ModelError: If the OCR engine cannot be initialized.
     """
 
@@ -141,8 +141,8 @@ class RapidOCRReader:
             from rapidocr import RapidOCR
         except ImportError as e:
             raise BlitzIDError(
-                "rapidocr is not installed. "
-                "Install the OCR extra: pip install blitzid[ocr]"
+                "rapidocr is a required dependency but is not installed; "
+                "reinstall blitzid"
             ) from e
 
         self.logger.info("Initializing RapidOCR (model dir: %s)", self.model_dir)

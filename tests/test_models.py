@@ -15,10 +15,8 @@ import pytest
 
 from blitzid._models import ModelManager, default_model_dir, session_options
 from blitzid.exceptions import ModelError
-from blitzid.face._arcface import (
-    ARCFACE_MODEL_FILENAME,
-    ARCFACE_MODEL_URL,
-)
+from blitzid.face._sface import SFACE_MODEL_FILENAME, SFACE_MODEL_URL
+from blitzid.face._yunet import YUNET_MODEL_FILENAME
 
 logger = logging.getLogger("test_models")
 
@@ -152,24 +150,24 @@ class TestModelManagerCustomModel:
         mgr = ModelManager(
             tmp_path,
             logger,
-            filename="arcface.onnx",
-            url="https://example.com/arcface.onnx",
+            filename="sface.onnx",
+            url="https://example.com/sface.onnx",
         )
-        assert mgr.model_path == tmp_path / "arcface.onnx"
-        assert mgr.url == "https://example.com/arcface.onnx"
+        assert mgr.model_path == tmp_path / "sface.onnx"
+        assert mgr.url == "https://example.com/sface.onnx"
 
-    def test_scrfd_defaults_without_overrides(self, tmp_path: Path) -> None:
+    def test_yunet_defaults_without_overrides(self, tmp_path: Path) -> None:
         mgr = ModelManager(tmp_path, logger)
-        assert mgr.model_path.name == "scrfd_2.5g.onnx"
-        assert "buffalo_m" in mgr.url
+        assert mgr.model_path.name == YUNET_MODEL_FILENAME
+        assert "opencv_zoo" in mgr.url
 
     def test_custom_url_is_downloaded(self, tmp_path: Path) -> None:
         """The url override is the URL actually fetched, not MODEL_URL."""
         mgr = ModelManager(
             tmp_path,
             logger,
-            filename="arcface.onnx",
-            url="https://example.com/arcface.onnx",
+            filename="sface.onnx",
+            url="https://example.com/sface.onnx",
             sha256="",
         )
         with patch(
@@ -179,17 +177,17 @@ class TestModelManagerCustomModel:
             mgr._download_model()
 
         request = mock_urlopen.call_args[0][0]
-        assert request.full_url == "https://example.com/arcface.onnx"
+        assert request.full_url == "https://example.com/sface.onnx"
         assert mgr.model_path.read_bytes() == b"weights"
 
-    def test_arcface_manager_downloads_arcface_url(self, tmp_path: Path) -> None:
+    def test_sface_manager_downloads_sface_url(self, tmp_path: Path) -> None:
         """The FaceVerifier model manager fetches the recognition URL."""
         payload = b"weights"
         mgr = ModelManager(
             tmp_path,
             logger,
-            filename=ARCFACE_MODEL_FILENAME,
-            url=ARCFACE_MODEL_URL,
+            filename=SFACE_MODEL_FILENAME,
+            url=SFACE_MODEL_URL,
             sha256=hashlib.sha256(payload).hexdigest(),
         )
         with patch(
@@ -199,8 +197,8 @@ class TestModelManagerCustomModel:
             mgr._download_model()
 
         request = mock_urlopen.call_args[0][0]
-        assert request.full_url == ARCFACE_MODEL_URL
-        assert mgr.model_path.name == ARCFACE_MODEL_FILENAME
+        assert request.full_url == SFACE_MODEL_URL
+        assert mgr.model_path.name == SFACE_MODEL_FILENAME
 
 
 class TestDigestVerification:
@@ -210,8 +208,8 @@ class TestDigestVerification:
         mgr = ModelManager(
             tmp_path,
             logger,
-            filename="arcface.onnx",
-            url="https://example.com/arcface.onnx",
+            filename="sface.onnx",
+            url="https://example.com/sface.onnx",
             sha256=digest,
         )
         with patch(
@@ -226,8 +224,8 @@ class TestDigestVerification:
         mgr = ModelManager(
             tmp_path,
             logger,
-            filename="arcface.onnx",
-            url="https://example.com/arcface.onnx",
+            filename="sface.onnx",
+            url="https://example.com/sface.onnx",
             sha256="0" * 64,
         )
         with (
@@ -246,8 +244,8 @@ class TestDigestVerification:
         mgr = ModelManager(
             tmp_path,
             logger,
-            filename="arcface.onnx",
-            url="https://example.com/arcface.onnx",
+            filename="sface.onnx",
+            url="https://example.com/sface.onnx",
             sha256="",
         )
         with patch(

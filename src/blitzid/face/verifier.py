@@ -1,10 +1,9 @@
-"""FaceVerifier — ArcFace-based 1:1 face verification.
+"""FaceVerifier — SFace-based 1:1 face verification.
 
-Runs the InsightFace ``buffalo_m`` ArcFace recognition ONNX model via an
-onnxruntime CPU session. Detected faces are aligned to the canonical
-ArcFace template by their five SCRFD landmarks, embedded as
-L2-normalized vectors, and compared by cosine similarity against a
-decision threshold.
+Runs the OpenCV Zoo SFace recognition model through OpenCV's CPU DNN
+backend. Detected faces are aligned to the canonical 112x112 template
+by their five YuNet landmarks, embedded as L2-normalized vectors, and
+compared by cosine similarity against a decision threshold.
 """
 
 from __future__ import annotations
@@ -13,28 +12,28 @@ import logging
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
 
 from blitzid._image import ImageInput, load_image
 from blitzid._models import ModelManager
-from blitzid.exceptions import BlitzIDError, FaceVerificationError
-from blitzid.face._arcface import (
-    ARCFACE_MODEL_FILENAME,
-    ARCFACE_MODEL_SHA256,
-    ARCFACE_MODEL_URL,
-    ARCFACE_TEMPLATE,
+from blitzid.exceptions import BlitzIDError, FaceVerificationError, ModelError
+from blitzid.face._face import Face, VerificationResult
+from blitzid.face._sface import (
+    SFACE_COSINE_THRESHOLD,
+    SFACE_MODEL_FILENAME,
+    SFACE_MODEL_SHA256,
+    SFACE_MODEL_URL,
+    SFACE_TEMPLATE,
     align_face,
     normalize_embedding,
-    to_blob,
-    validate_architecture,
 )
-from blitzid.face._face import Face, VerificationResult
 from blitzid.face.detector import FaceDetectorDNN
 
 __all__ = ["FaceVerifier", "VerificationResult"]
 
-DEFAULT_THRESHOLD = 0.4
+DEFAULT_THRESHOLD = SFACE_COSINE_THRESHOLD
 
 
 def _select_face(faces: list[Face], image_input: ImageInput) -> Face:
@@ -45,10 +44,10 @@ def _select_face(faces: list[Face], image_input: ImageInput) -> Face:
 
 
 class FaceVerifier:
-    """ArcFace face verifier.
+    """SFace face verifier.
 
-    Compares two faces by embedding them with ArcFace and measuring
-    cosine similarity. Faces come from the SCRFD detector (an internal
+    Compares two faces by embedding them with SFace and measuring
+    cosine similarity. Faces come from the YuNet detector (an internal
     default or one the caller supplies).
     """
 
@@ -76,23 +75,25 @@ class FaceVerifier:
         )
         if model_dir is None:
             model_dir = self.detector.model_manager.model_dir
-        self.backend = "ONNXRuntime"
+        self.backend = "OpenCV DNN (SFace)"
 
         self.model_manager = ModelManager(
             model_dir,
             self.logger,
             allow_downloads=allow_downloads,
-            filename=ARCFACE_MODEL_FILENAME,
-            url=ARCFACE_MODEL_URL,
-            sha256=ARCFACE_MODEL_SHA256,
+            filename=SFACE_MODEL_FILENAME,
+            url=SFACE_MODEL_URL,
+            sha256=SFACE_MODEL_SHA256,
         )
-        self.session = self.model_manager.load_session()
-
-        inputs = self.session.get_inputs()
-        outputs = self.session.get_outputs()
-        validate_architecture(inputs[0].shape, outputs[0].shape)
-        self._input_name = inputs[0].name
-        self._output_name = outputs[0].name
+        self.model_manager.ensure_model_exists()
+        try:
+            self._recognizer = cv2.FaceRecognizerSF.create(
+                str(self.model_manager.model_path), ""
+            )
+        except cv2.error as exc:
+            raise ModelError(
+                f"Failed to load SFace model {self.model_manager.model_path}: {exc}"
+            ) from exc
 
         self.threshold = threshold
 
@@ -109,7 +110,7 @@ class FaceVerifier:
         image_input: ImageInput,
         face: Face | None = None,
     ) -> NDArray[np.float32]:
-        """Embed a face as an L2-normalized ArcFace vector.
+        """Embed a face as an L2-normalized SFace vector.
 
         Args:
             image_input: Image holding the face (path, array, or PIL Image).
@@ -117,7 +118,7 @@ class FaceVerifier:
                 highest-confidence face is detected first.
 
         Returns:
-            L2-normalized embedding (``ARCFACE_EMBEDDING_DIM`` values).
+            L2-normalized embedding (``SFACE_EMBEDDING_DIM`` values).
 
         Raises:
             FaceVerificationError: If no face is detected or landmarks are
@@ -201,17 +202,15 @@ class FaceVerifier:
         face: Face,
     ) -> NDArray[np.float32]:
         """Align and embed one detected face of an already-loaded image."""
-        if len(face.landmarks) != len(ARCFACE_TEMPLATE):
+        if len(face.landmarks) != len(SFACE_TEMPLATE):
             raise FaceVerificationError(
                 f"Face has {len(face.landmarks)} landmarks, "
-                f"expected {len(ARCFACE_TEMPLATE)}; re-detect with "
+                f"expected {len(SFACE_TEMPLATE)}; re-detect with "
                 "detect_face_landmarks"
             )
         aligned = align_face(img, face.landmarks)
-        output = self.session.run(
-            [self._output_name], {self._input_name: to_blob(aligned)}
-        )
-        return normalize_embedding(output[0])
+        feature = np.asarray(self._recognizer.feature(aligned), dtype=np.float32)
+        return normalize_embedding(feature)
 
     def _compare(
         self,

@@ -1,6 +1,6 @@
 """FaceVerifier smoke test — runs the full verification pipeline offline.
 
-Exercises ArcFace face verification on the committed specimen and historical fixtures:
+Exercises SFace face verification on the committed specimen and historical fixtures:
 the specimen ID portrait against itself (expect similarity ~1.0),
 against a rescaled copy of itself (expect still verified), and two
 different people from the 1927 Solvay conference photo against each

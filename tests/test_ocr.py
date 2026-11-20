@@ -1,8 +1,8 @@
 """Tests for blitzid.reading.ocr — result conversion and reader validation.
 
-Pure-function and stubbed-reader tests run without rapidocr, models,
-or network. The engine-backed tests download PP-OCR weights on first
-use, so they only run when BLITZID_OCR_INTEGRATION=1 is set.
+Pure-function and stubbed-reader tests run without models or network.
+The engine-backed tests download PP-OCR weights on first use, so they
+only run when BLITZID_OCR_INTEGRATION=1 is set.
 """
 
 from __future__ import annotations
@@ -64,12 +64,12 @@ class TestToOCRTexts:
             _to_ocr_texts(boxes, ("a", "b"), (0.9,))
 
 
-class TestMissingExtra:
+class TestMissingDependency:
     def test_init_raises_without_rapidocr(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setitem(sys.modules, "rapidocr", None)
-        with pytest.raises(BlitzIDError, match=r"blitzid\[ocr\]"):
+        with pytest.raises(BlitzIDError, match="required dependency"):
             RapidOCRReader()
 
 
@@ -87,7 +87,6 @@ class TestReadSpecimen:
         not _INTEGRATION, reason="set BLITZID_OCR_INTEGRATION=1 to download models"
     )
     def test_reads_text_lines(self) -> None:
-        pytest.importorskip("rapidocr")
         texts = RapidOCRReader(log_level=logging.WARNING).read(SPECIMEN)
         assert texts
         for line in texts:
@@ -102,12 +101,10 @@ class TestReadSpecimen:
         not _INTEGRATION, reason="set BLITZID_OCR_INTEGRATION=1 to download models"
     )
     def test_blank_image_yields_no_text(self) -> None:
-        pytest.importorskip("rapidocr")
         reader = RapidOCRReader(log_level=logging.WARNING)
         assert reader.read(np.zeros((480, 640, 3), dtype=np.uint8)) == []
 
     def test_partial_pipeline_result_raises_model_error(self) -> None:
-        pytest.importorskip("rapidocr")
         from rapidocr.ch_ppocr_det.utils import TextDetOutput
 
         def det_only_engine(img: object) -> object:

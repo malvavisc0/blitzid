@@ -1,7 +1,7 @@
 """Tests for face attributes (age group, gender, race).
 
 Pure tests run without weights; the reader test needs the FairFace
-weights (downloaded on first use) and the SCRFD detector.
+weights (downloaded on first use) and the YuNet detector.
 """
 
 from __future__ import annotations

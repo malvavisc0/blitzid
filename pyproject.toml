@@ -1,6 +1,6 @@
 [project]
 name = "blitzid"
-version = "0.3.6"
+version = "0.4.0"
 description = "Modular DNN-based ID document reading framework (face detection, OCR, MRZ) optimized for CPU deployment"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,7 +14,8 @@ keywords = [
     "face-detection",
     "id-document",
     "icao-9303",
-    "scrfd",
+    "yunet",
+    "sface",
     "onnx",
 ]
 classifiers = [
@@ -36,20 +37,16 @@ dependencies = [
     # Structured-output models (ExtractedField, StructuredOCR) are
     # exported from the package root, so pydantic is a core dependency.
     "pydantic",
+    # OCR / MRZ and the LLM-backed structured reader ship in the core
+    # install; they are not optional features.
+    "rapidocr",
+    "pydantic-ai>=2.71",
+    "httpx2",
+    "langfuse",
 ]
 
 # ── Optional dependency groups ─────────────────────────────
 [project.optional-dependencies]
-ocr = [
-    "rapidocr",
-    # LLM-backed structured extraction from OCR output. The httpx2
-    # client below requires 2.32+; pin to the release validated here.
-    "pydantic-ai>=2.71",
-    # Per-call async HTTP client passed to the pydantic-ai OpenAI provider.
-    "httpx2",
-    # Optional: Langfuse tracing of the LLM calls (env-gated).
-    "langfuse",
-]
 barcode = [
     # PDF417 decoding for AAMVA driver's-license payloads (also the
     # encoder the test suite round-trips synthetic payloads with).
@@ -82,7 +79,7 @@ dev = [
     "fakeredis",
 ]
 all = [
-    "blitzid[api,barcode,ocr,scripts,dev]",
+    "blitzid[api,barcode,scripts,dev]",
 ]
 
 # ── Build system ───────────────────────────────────────────
@@ -97,6 +94,10 @@ override-dependencies = ["opencv-python; sys_platform == 'never'"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/blitzid"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"THIRD_PARTY_NOTICES.md" = "blitzid/THIRD_PARTY_NOTICES.md"
+"LICENSES" = "blitzid/LICENSES"
 
 # ── Project URLs ───────────────────────────────────────────
 [project.urls]
@@ -132,11 +133,10 @@ python_version = "3.12"
 strict = true
 
 [[tool.mypy.overrides]]
-# Optional user-installed dependencies, lazy-imported inside guarded
-# methods (PIL in _image.py, rapidocr in ocr.py, pydantic-ai + httpx2 in
-# structurize.py, langfuse + opentelemetry in _observability.py):
-# absent in core-only installs, so there is nothing to type-check
-# against there.
+# Lazy/optional imports (PIL in _image.py, rapidocr in ocr.py,
+# pydantic-ai + httpx2 in structurize.py, langfuse + opentelemetry in
+# _observability.py). rapidocr has no type stubs; PIL, zxing-cpp, and
+# the observability stack are only present in some installs.
 module = [
     "PIL",
     "PIL.*",

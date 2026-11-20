@@ -2,7 +2,7 @@
 
 A capture session records three frames while the user performs one
 random action. This module verifies the action actually happened from
-the SCRFD landmarks and box alone: ``turn_head`` moves the nose along
+the five-point landmarks and box alone: ``turn_head`` moves the nose along
 the eye axis, ``smile`` widens the mouth relative to the eye gap, and
 ``move_closer`` grows the face. A printed photo or a static screen
 image cannot do any of them, which is the whole liveness check.

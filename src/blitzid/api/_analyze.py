@@ -45,14 +45,15 @@ class Engines:
     """Shared analysis engine singletons with one lock per engine.
 
     The locks serialize access to the engines that are not thread-safe:
-    ``detector_lock`` guards the one SCRFD ``FaceDetectorDNN`` instance
+    ``detector_lock`` guards the one YuNet ``FaceDetectorDNN`` instance
     (every detection, including those behind the attribute, anti-spoof,
-    verification, and document-crop paths), ``ocr_lock`` the RapidOCR
-    pipeline (its one text pass per job feeds the OCR, MRZ, and
-    structured sections), and ``structured_lock`` the LLM reader. The
-    FairFace, MiniFASNet, and ArcFace passes are plain onnxruntime
-    sessions, which are thread-safe, so they run outside any lock, and
-    the zxing-cpp barcode decode is a stateless per-call function.
+    verification, and document-crop paths), ``verifier_lock`` the SFace
+    recognizer's OpenCV DNN network, ``ocr_lock`` the RapidOCR pipeline
+    (its one text pass per job feeds the OCR, MRZ, and structured
+    sections), and ``structured_lock`` the LLM reader. The FairFace and
+    MiniFASNet passes are plain onnxruntime sessions, which are
+    thread-safe, so they run outside any lock, and the zxing-cpp barcode
+    decode is a stateless per-call function.
     Fields are None when an engine is unavailable (missing ``ocr`` or
     ``barcode`` extra, missing weights, missing LLM configuration).
     """
@@ -66,6 +67,7 @@ class Engines:
     attribute_reader: FaceAttributeReader | None = None
     antispoof_reader: AntiSpoofReader | None = None
     detector_lock: Lock = field(default_factory=Lock)
+    verifier_lock: Lock = field(default_factory=Lock)
     ocr_lock: Lock = field(default_factory=Lock)
     structured_lock: Lock = field(default_factory=Lock)
 
@@ -126,7 +128,7 @@ def _read_faces(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> list
     """Detect the image's faces (shared between sections)."""
     detector = engines.detector
     if detector is None:
-        raise ModelError("face engine unavailable (SCRFD weights not loaded)")
+        raise ModelError("face engine unavailable (YuNet weights not loaded)")
 
     def _load() -> list[Face]:
         with engines.detector_lock:
@@ -141,7 +143,7 @@ def _read_texts(
     """Read the image's text lines (shared between sections)."""
     reader = engines.ocr_reader
     if reader is None:
-        raise ModelError("ocr analysis requires the blitzid[ocr] extra")
+        raise ModelError("ocr analysis requires the initialized RapidOCR engine")
 
     def _load() -> list[OCRText]:
         with engines.ocr_lock:
@@ -157,7 +159,7 @@ def _read_attributes(
     reader = engines.attribute_reader
     if reader is None:
         raise ModelError(
-            "attributes analysis requires the SCRFD detector and FairFace weights"
+            "attributes analysis requires the YuNet detector and FairFace weights"
         )
 
     def _load() -> list[FaceAttributes]:
@@ -170,7 +172,7 @@ def _read_mrz(img: np.ndarray, engines: Engines, memo: dict[str, Any]) -> MRZRec
     """Parse the MRZ from the shared OCR text lines."""
     reader = engines.mrz_reader
     if reader is None:
-        raise ModelError("mrz analysis requires the blitzid[ocr] extra")
+        raise ModelError("mrz analysis requires the initialized RapidOCR engine")
 
     def _load() -> MRZRecord:
         return reader.parse(_read_texts(img, engines, memo))
@@ -185,8 +187,8 @@ def _read_structured(
     reader = engines.structured_reader
     if reader is None or engines.ocr_reader is None:
         raise ModelError(
-            "structured analysis requires the blitzid[ocr] extra "
-            "and LLM configuration (BLITZID_LLM_*)"
+            "structured analysis requires the initialized OCR and LLM engines "
+            "(BLITZID_LLM_* config)"
         )
 
     def _load() -> StructuredOCR:
@@ -231,7 +233,7 @@ def _run_antispoof(
     reader = engines.antispoof_reader
     if reader is None:
         raise ModelError(
-            "antispoof analysis requires the SCRFD detector and MiniFASNet weights"
+            "antispoof analysis requires the YuNet detector and MiniFASNet weights"
         )
     scores = reader.read_faces(img, _read_faces(img, engines, memo))
     return {"faces": [asdict(item) for item in scores]}
@@ -284,8 +286,8 @@ def _run_consistency(
         or engines.ocr_reader is None
     ):
         raise ModelError(
-            "consistency analysis requires the blitzid[ocr] extra "
-            "and LLM configuration (BLITZID_LLM_*)"
+            "consistency analysis requires the initialized OCR, MRZ, and LLM "
+            "engines (BLITZID_LLM_* config)"
         )
     photo = None
     if engines.attribute_reader is not None:

@@ -9,13 +9,15 @@ tool use. Answer the question; move on. Talk as a human-being.
 ## Project
 blitzid — modular DNN-based ID document reading framework, optimized
 for CPU. A typed Python library (`blitzid`, src layout) with two
-layers. Face detection (`src/blitzid/face/`): SCRFD-2.5G ONNX model
-(InsightFace `buffalo_m` detection weights, auto-downloaded) run via
-an onnxruntime CPU session, with LRU result cache, multi-scale
-detection, NMS + size filtering, batch processing, and bbox
-visualization. Document reading (`src/blitzid/reading/`): RapidOCR
-text lines (`ocr` extra), ICAO 9303 MRZ parsing (TD1/TD2/TD3), and
-AAMVA PDF417 driver's-license parsing (`barcode` extra).
+layers. Face detection/verification (`src/blitzid/face/`): YuNet
+detector (MIT) and SFace recognizer (Apache 2.0) via OpenCV's CPU DNN
+backend, with LRU result cache, multi-scale detection, NMS + size
+filtering, batch processing, bbox visualization, and 1:1 cosine
+verification; FairFace attributes and MiniFASNet anti-spoofing use
+onnxruntime CPU. Document reading (`src/blitzid/reading/`): RapidOCR
+text lines (core), ICAO 9303 MRZ parsing (TD1/TD2/TD3), AAMVA PDF417
+driver's-license parsing (`barcode` extra), and LLM-backed structured
+extraction (core).
 Inputs are file paths, NumPy arrays, or PIL Images; outputs are
 `(x, y, w, h, confidence)` tuples and crops.
 
@@ -23,10 +25,9 @@ Inputs are file paths, NumPy arrays, or PIL Images; outputs are
 - python 3.12+ (CI matrix: 3.12 / 3.13 / 3.14), uv, pyproject.toml
   (hatchling backend, src layout, `py.typed`)
 - core deps: numpy, onnxruntime (CPU), opencv-python-headless>=5,
-  platformdirs, pydantic
-- optional extras: `ocr` (rapidocr, pydantic-ai, httpx2, langfuse),
-  `barcode` (zxing-cpp), `api` (fastapi, uvicorn, redis), `scripts`
-  (tqdm), `dev` (pytest, ruff, mypy, pre-commit)
+  platformdirs, pydantic, rapidocr, pydantic-ai, httpx2, langfuse
+- optional extras: `barcode` (zxing-cpp), `api` (fastapi, uvicorn,
+  redis), `scripts` (tqdm), `dev` (pytest, ruff, mypy, pre-commit)
 - Type checker: **mypy** (`strict = true` in pyproject.toml)
 - Lint/format: **ruff** (line-length 88, target py312; E, W, F, I, UP,
   B, SIM, RUF)
@@ -126,12 +127,14 @@ Write the simplest correct solution. Delete anything that isn't needed.
 - Layout: two domain subpackages over shared infra. Face detection in
   `src/blitzid/face/` (`detector.py` — `FaceDetectorDNN` plus NMS /
   IoU / size filter; `_face.py` — `Face`, `DetectionMetrics`, cache,
-  drawing; `_scrfd.py` — SCRFD preprocess/decode). Document reading in
+  drawing; `_yunet.py` — YuNet mapping/letterbox; `_sface.py` — SFace
+  alignment/embedding). Document reading in
   `src/blitzid/reading/` (`ocr.py`, `mrz.py`, `barcode.py`,
   `structurize.py`, `consistency.py`, `document.py`). Shared helpers at the
   top level: `_image.py` (input loading and normalization), `_models.py`
-  (`ModelManager` — SCRFD ONNX download + CPU
-  `onnxruntime.InferenceSession`, default cache dir via `platformdirs`).
+  (`ModelManager` — pinned model download + CPU
+  `onnxruntime.InferenceSession` for the ONNX classifiers, default cache
+  dir via `platformdirs`).
   Subpackage `__init__.py` files hold no re-exports — the only public
   import path is the package root.
 - Exceptions in `src/blitzid/exceptions.py`: `BlitzIDError` base,
@@ -140,9 +143,10 @@ Write the simplest correct solution. Delete anything that isn't needed.
   validation), `BarcodeError` (PDF417 not found / malformed / failed
   AAMVA validation), `FaceVerificationError` (no face for
   verification).
-- Optional deps (PIL, rapidocr via the `ocr` extra, zxing-cpp via the
-  `barcode` extra) are lazy-imported inside functions, guarded, with
-  targeted `# type: ignore` codes; core must work without them.
+- Heavy/optional imports (PIL, rapidocr, pydantic-ai / httpx2,
+  langfuse, zxing-cpp) are lazy-imported inside functions, guarded, with
+  targeted `# type: ignore` codes; a missing core dependency is a
+  broken install, and zxing-cpp remains optional.
 - The MRZ layer (`src/blitzid/reading/mrz.py`) is pure ICAO 9303 logic
   over the OCR reader's text lines — no new models, no guessy repair:
   obvious OCR confusions (0/O, 1/I, 2/Z, 5/S, 6/G, 8/B) resolve
@@ -150,23 +154,23 @@ Write the simplest correct solution. Delete anything that isn't needed.
   letter-only field validation gate everything else, and a failing
   field raises `MRZError`.
 - Images normalize to 3-channel BGR `np.ndarray`; `ImageInput` is
-  `path | ndarray | PIL Image`. SCRFD runs letterboxed at `det_size`
+  `path | ndarray | PIL Image`. YuNet runs letterboxed at `det_size`
   (default 640×640, multiples of 32); boxes map back to original image
   coordinates. Model weights download on demand to the default models
   dir — `BLITZID_MODELS_DIR` when set, else the `platformdirs` user
   cache — never into the repo. `scripts/download_models.py` pre-fetches
   all weights for Docker images.
-- No fallbacks between models or providers: exactly one SCRFD model on
-  the explicit `CPUExecutionProvider`; anything missing or unloadable
-  raises `ModelError`.
+- No fallbacks between models or providers: exactly one YuNet detector
+  and one SFace recognizer on the CPU DNN backend; anything missing or
+  unloadable raises `ModelError`.
 - Public detector surface: `detect_face`, `detect_face_landmarks`,
   `detect_face_with_metrics`, `extract_faces`, `visualize_detections`,
-  `detect_faces_batch`. Landmarks follow SCRFD order (right eye, left
+  `detect_faces_batch`. Landmarks follow YuNet order (right eye, left
   eye, nose tip, right mouth corner, left mouth corner). The OCR
   surface is `RapidOCRReader.read()` returning `OCRText` records — one
-  engine (RapidOCR on onnxruntime CPU), lazy-imported from the `ocr`
-  extra. The MRZ surface is `MRZReader.read()` returning an
-  `MRZRecord` (same `ocr` extra). The barcode surface is
+  engine (RapidOCR on onnxruntime CPU), lazy-imported from the core
+  dependencies. The MRZ surface is `MRZReader.read()` returning an
+  `MRZRecord`. The barcode surface is
   `BarcodeReader.read()` returning a `BarcodeRecord` (`barcode`
   extra, zxing-cpp decoder; the parser validates the AAMVA header's
   subfile offsets/lengths/count, gates mandatory fields per

@@ -2,7 +2,7 @@
 
 Synthetic-image tests run without models or network (the synthetic
 document factory lives in ``conftest.py``). The face_present tests on
-the specimen fixture use the real SCRFD detector (weights download on
+the specimen fixture use the real YuNet detector (weights download on
 first use, same as tests/test_detector.py).
 """
 

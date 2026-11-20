@@ -2,24 +2,24 @@
 
 Public API
 ----------
-- ``FaceDetectorDNN`` — the SCRFD-based face detector.
+- ``FaceDetectorDNN`` — the YuNet-based face detector.
 - ``Face`` — detection record (bbox, confidence, landmarks).
 - ``DetectionMetrics`` — metrics dataclass returned by ``detect_face_with_metrics``.
-- ``FaceVerifier`` — the ArcFace-based 1:1 face verifier.
+- ``FaceVerifier`` — the SFace-based 1:1 face verifier.
 - ``VerificationResult`` — verification outcome (verdict, similarity, threshold).
 - ``FaceAttributeReader`` — age group, gender, and race per face.
 - ``FaceAttributes`` — one face's predicted attributes.
 - ``AntiSpoofReader`` — passive live-vs-spoof scores per face.
 - ``AntiSpoofResult`` — one face's spoof scores (paper, real, screen).
-- ``RapidOCRReader`` — the RapidOCR-based text reader (``ocr`` extra).
+- ``RapidOCRReader`` — the RapidOCR-based text reader.
 - ``OCRText`` — recognized text line (bbox, text, confidence).
-- ``MRZReader`` — the ICAO 9303 machine-readable zone reader (``ocr`` extra).
+- ``MRZReader`` — the ICAO 9303 machine-readable zone reader.
 - ``MRZRecord`` — parsed MRZ fields.
 - ``BarcodeReader`` — the AAMVA PDF417 driver's-license reader
   (``barcode`` extra).
 - ``BarcodeRecord`` — parsed AAMVA payload fields.
 - ``StructuredOCRReader`` — LLM-backed structured output from OCR lines
-  (``ocr`` extra).
+  (core).
 - ``StructuredOCR``, ``ExtractedField`` — structured-output schemas.
 - ``cross_check`` — field-by-field comparison of the printed fields
   against the machine-readable zone and the portrait photo.

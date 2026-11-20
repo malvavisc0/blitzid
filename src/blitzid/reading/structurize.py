@@ -26,7 +26,7 @@ all three settings are required (an unset one raises at construction):
 
 The endpoint call is bounded by ``timeout`` (default 180 s).
 
-Requires the ``ocr`` extra (``pip install blitzid[ocr]``).
+Requires ``pydantic-ai`` and ``httpx2``, which ship with blitzid.
 """
 
 from __future__ import annotations
@@ -357,8 +357,8 @@ class StructuredOCRReader:
             from it, not from the model.
 
         Raises:
-            BlitzIDError: If ``kind`` is invalid or the ``ocr`` extra
-                (pydantic-ai) is not installed.
+            BlitzIDError: If ``kind`` is invalid or the pydantic-ai/httpx2
+                dependencies are missing.
             ModelError: If the endpoint call fails or returns no usable
                 structured data.
         """
@@ -438,7 +438,7 @@ class StructuredOCRReader:
         """Run one extraction with an HTTP client owned by this event loop.
 
         Raises:
-            BlitzIDError: If the ``ocr`` extra cannot be imported.
+            BlitzIDError: If the pydantic-ai/httpx2 dependencies are missing.
         """
         try:
             import httpx2
@@ -449,8 +449,8 @@ class StructuredOCRReader:
             from pydantic_ai.settings import ModelSettings
         except ImportError as e:
             raise BlitzIDError(
-                f"Cannot import pydantic-ai (ocr extra): {e}. "
-                "Install it: pip install blitzid[ocr]"
+                "pydantic-ai/httpx2 are required dependencies but are not "
+                f"installed ({e}); reinstall blitzid"
             ) from e
 
         self.logger.info(

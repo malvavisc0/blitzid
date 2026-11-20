@@ -393,12 +393,12 @@ class TestParseName:
         assert _parse_name("<<<<<<<<<<<<<<<<<<<<<<<<<<") == ("", "")
 
 
-class TestMissingExtra:
+class TestMissingDependency:
     def test_init_raises_without_rapidocr(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setitem(sys.modules, "rapidocr", None)
-        with pytest.raises(BlitzIDError, match=r"blitzid\[ocr\]"):
+        with pytest.raises(BlitzIDError, match="required dependency"):
             MRZReader()
 
 

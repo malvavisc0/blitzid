@@ -1,7 +1,7 @@
 """Tests for passive face anti-spoofing (live vs photo-of-a-face).
 
 Pure tests run without weights; the reader test needs the MiniFASNet
-weights (downloaded on first use) and the SCRFD detector.
+weights (downloaded on first use) and the YuNet detector.
 """
 
 from __future__ import annotations

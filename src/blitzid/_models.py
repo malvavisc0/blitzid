@@ -1,12 +1,12 @@
 """Model management for ONNX model weights.
 
-Downloads model files (defaulting to the SCRFD-2.5G detector, InsightFace
-``buffalo_m`` detection weights) and creates a CPU inference session.
-Custom files (e.g. the ArcFace recognition model) are selected via the
-``filename`` / ``url`` / ``sha256`` constructor arguments; downloads are
-verified against the pinned digest (pass ``sha256=""`` to skip the
-check for a custom model). Weights live in the default models dir:
-``BLITZID_MODELS_DIR`` when set, else the ``platformdirs`` user cache.
+Downloads model files (defaulting to the OpenCV Zoo YuNet detector) and
+creates a CPU inference session. Custom files (attribute, anti-spoof,
+and other ONNX engines) are selected via the ``filename`` / ``url`` /
+``sha256`` constructor arguments; downloads are verified against the
+pinned digest (pass ``sha256=""`` to skip the check for a custom model).
+Weights live in the default models dir: ``BLITZID_MODELS_DIR`` when set,
+else the ``platformdirs`` user cache.
 """
 
 from __future__ import annotations
@@ -21,6 +21,11 @@ import onnxruntime as ort  # type: ignore[import-untyped]
 from platformdirs import user_cache_dir
 
 from blitzid.exceptions import ModelError
+from blitzid.face._yunet import (
+    YUNET_MODEL_FILENAME,
+    YUNET_MODEL_SHA256,
+    YUNET_MODEL_URL,
+)
 
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 
@@ -30,12 +35,10 @@ MODELS_DIR_ENV = "BLITZID_MODELS_DIR"
 def session_options() -> ort.SessionOptions:
     """Session options shared by every in-house ONNX engine.
 
-    Intra-op threads do not spin-wait between kernels: the engines run
-    back to back (detector, then recognizer or classifier) and several
-    sessions share one process in the API, so a pool busy-spinning after
-    its last op only steals cores from the next session. Measured on a
-    16-thread CPU: detect + embed drops from ~260 ms to ~180 ms, with no
-    change to any output.
+    Intra-op threads do not spin-wait between kernels: the attribute and
+    anti-spoof engines run in one process alongside other CPU work, so a
+    pool busy-spinning after its last op only steals cores from the next
+    session.
     """
     options = ort.SessionOptions()
     options.add_session_config_entry("session.intra_op.allow_spinning", "0")
@@ -67,11 +70,9 @@ def default_model_dir(subdir: str | None = None) -> Path:
 class ModelManager:
     """Manages an ONNX model file and its inference session."""
 
-    MODEL_URL = (
-        "https://huggingface.co/immich-app/buffalo_m/resolve/main/detection/model.onnx"
-    )
-    MODEL_FILENAME = "scrfd_2.5g.onnx"
-    MODEL_SHA256 = "041f73f47371333d1d17a6fee6c8ab4e6aecabefe398ff32cca4e2d5eaee0af9"
+    MODEL_URL = YUNET_MODEL_URL
+    MODEL_FILENAME = YUNET_MODEL_FILENAME
+    MODEL_SHA256 = YUNET_MODEL_SHA256
 
     def __init__(
         self,

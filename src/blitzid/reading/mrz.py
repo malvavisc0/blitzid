@@ -3,8 +3,8 @@
 Selects MRZ lines from OCR text, validates them via ICAO 9303 check
 digits plus the letter-only fields (document code, issuer, nationality),
 and parses TD1 (3x30, ID cards), TD2 (2x36), and TD3 (2x44, passports)
-layouts into :class:`MRZRecord` fields. Runs on top of the ``ocr``
-extra's RapidOCRReader. Obvious OCR confusions are resolved before
+layouts into :class:`MRZRecord` fields. Runs on top of the core
+RapidOCRReader. Obvious OCR confusions are resolved before
 validation: each field's alphabet determines the character (0/O, 1/I,
 2/Z, 5/S, 6/G, 8/B), and the check digits then gate the result, so a
 wrong guess still raises. A zone that does not validate raises
@@ -408,7 +408,7 @@ class MRZReader:
         log_level: Logging level for the reader's logger.
 
     Raises:
-        BlitzIDError: If the ``ocr`` extra (rapidocr) is not installed.
+        BlitzIDError: If the rapidocr dependency is unavailable.
     """
 
     def __init__(

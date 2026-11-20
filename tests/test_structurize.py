@@ -1,8 +1,7 @@
 """Tests for blitzid.reading.structurize — prompt building and reader setup.
 
-The pydantic-ai ``ocr`` extra is not available in core-only installs, so
-the unit tests cover prompt formatting, schema behavior, and output
-normalization plus the missing-extra guard. Endpoint-backed calls
+The unit tests cover prompt formatting, schema behavior, and output
+normalization plus the missing-dependency guard. Endpoint-backed calls
 belong in the smoke test (``scripts/structurize_smoke.py``), not here.
 """
 
@@ -244,7 +243,6 @@ class TestRead:
     def test_worker_calls_own_and_close_their_http_clients(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        pytest.importorskip("pydantic_ai")
         import httpx2
 
         barrier = Barrier(2)
@@ -343,13 +341,13 @@ class TestConfiguration:
         assert reader.model_name == "test-model"
 
 
-class TestMissingExtra:
+class TestMissingDependency:
     def test_extraction_raises_without_pydantic_ai(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         reader = StructuredOCRReader(log_level=logging.WARNING)
         monkeypatch.setitem(sys.modules, "pydantic_ai", None)
-        with pytest.raises(BlitzIDError, match=r"blitzid\[ocr\]"):
+        with pytest.raises(BlitzIDError, match="required dependencies"):
             asyncio.run(reader._extract("SPECIMEN", "auto", date.today()))
 
 

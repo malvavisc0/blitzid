@@ -6,12 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- The `ocr` extra now requires `pydantic-ai>=2.71` instead of pinning
-  `opentelemetry-api<1.44`: pydantic-ai 2.x no longer imports the private
-  `opentelemetry._events` module removed in OpenTelemetry 1.44. The lockfile is
-  refreshed across all extras (pydantic-ai 2.71, OpenTelemetry 1.45.2, Langfuse
-  5.2), and the structured reader passes an `httpx2` client to the provider as
-  pydantic-ai now deprecates legacy `httpx` clients.
+- **Breaking (models and API):** replaced the InsightFace SCRFD-2.5G
+  detector and ArcFace `buffalo_m` recognizer with YuNet (MIT) and SFace
+  (Apache 2.0) from OpenCV Zoo, both running through OpenCV's CPU DNN
+  backend. This removes the non-commercial InsightFace weights from the
+  default path and cuts 1:1 verification from ~207 ms to ~27 ms and
+  detection from ~30 ms to ~8 ms on the reference CPU (11th Gen Intel
+  Core i7-11850H). `FaceVerifier.embed()` now returns 128-d vectors
+  instead of 512-d, the default verification threshold is 0.363 instead
+  of 0.4, `DetectionMetrics.backend` reports
+  `"OpenCV DNN (YuNet)"`, and `VerificationResult.backend` reports
+  `"OpenCV DNN (SFace)"`. Existing `scrfd_2.5g.onnx` and
+  `arcface_buffalo_m.onnx` caches are no longer read and can be deleted.
+  Model notices live in `THIRD_PARTY_NOTICES.md`.
+- **Breaking (packaging):** removed the `ocr` and `structured` extras and
+  moved their dependencies (`rapidocr`, `pydantic-ai>=2.71`, `httpx2`,
+  `langfuse`) into the core install. `pip install blitzid` now always
+  includes text reading, MRZ parsing, and structured extraction; the
+  remaining runtime extras are `barcode` and `api` (plus `scripts` and
+  `dev` for contributors). This also removes the `opentelemetry-api<1.44`
+  hold: pydantic-ai 2.x no longer imports the private
+  `opentelemetry._events` module removed in OpenTelemetry 1.44. The
+  lockfile is refreshed (pydantic-ai 2.71, OpenTelemetry 1.45.2, Langfuse
+  5.2), and the structured reader passes an `httpx2` client to the
+  provider as pydantic-ai now deprecates legacy `httpx` clients.
 
 ## [0.3.6] - 2026-10-07
 

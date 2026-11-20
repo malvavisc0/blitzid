@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+import cv2
 import onnxruntime as ort  # type: ignore[import-untyped]
 
 from blitzid import FaceDetectorDNN, FaceVerifier
@@ -87,8 +88,10 @@ def _benchmark_detection(
     """Time engine init and warm detection for one preset.
 
     Init is the median of several constructions — a single sample is
-    dominated by one-time onnxruntime setup and run order, not by the
-    preset (all presets load the same model).
+    dominated by one-time engine setup and run order, not by the preset
+    (all presets load the same model). The cache is cleared before every
+    timed call so presets with caching enabled measure inference, not
+    lookup.
     """
     init_timings = []
     for _ in range(_INIT_RUNS):
@@ -96,7 +99,11 @@ def _benchmark_detection(
         detector = _detector(preset)
         init_timings.append((time.perf_counter() - start) * 1000)
 
-    timings = _timed_ms(lambda: detector.detect_face(image), runs)
+    def detect() -> None:
+        detector.clear_cache()
+        detector.detect_face(image)
+
+    timings = _timed_ms(detect, runs)
     return (
         preset,
         f"detect_face ({image.name})",
@@ -147,13 +154,7 @@ def _benchmark_verification(image: Path, runs: int) -> tuple[str, str, float, fl
 
 
 def _benchmark_ocr(mrz_image: Path, runs: int) -> list[tuple[str, str, float, float]]:
-    """Benchmark RapidOCRReader and MRZReader; skipped without the extra."""
-    try:
-        import rapidocr  # noqa: F401
-    except ImportError:
-        print("(ocr benchmarks skipped: rapidocr not installed)")
-        return []
-
+    """Benchmark RapidOCRReader and MRZReader."""
     from blitzid import MRZReader, RapidOCRReader
 
     reader = RapidOCRReader(log_level=logging.WARNING)
@@ -178,7 +179,7 @@ def _cpu_model() -> str:
 def _context_line() -> str:
     return (
         f"python {platform.python_version()} | "
-        f"onnxruntime {ort.__version__} | "
+        f"opencv {cv2.__version__} | onnxruntime {ort.__version__} | "
         f"{_cpu_model()} | {platform.machine()}"
     )
 

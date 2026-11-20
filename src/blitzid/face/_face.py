@@ -19,7 +19,7 @@ class Face:
         confidence: Detection score in ``[0, 1]``.
         landmarks: Subpixel ``(x, y)`` points in image pixels — right eye,
             left eye, nose tip, right mouth corner, left mouth corner
-            (SCRFD order). Empty when no points are available.
+            (YuNet order). Empty when no points are available.
     """
 
     bbox: tuple[int, int, int, int]
@@ -37,7 +37,7 @@ class DetectionMetrics:
         processing_time: Inference time in seconds (cache-lookup time on
             cache hits).
         image_size: ``(width, height)`` of the input image.
-        backend: Backend identifier, e.g. ``"ONNXRuntime"``.
+        backend: Backend identifier, e.g. ``"OpenCV DNN (YuNet)"``.
         num_faces: Number of detected faces.
         cache_hit: Whether the result came from the cache.
     """
@@ -60,14 +60,14 @@ class VerificationResult:
         threshold: The decision threshold that was applied.
         processing_time: End-to-end verification time in seconds —
             image loading, face detection, embedding, and comparison.
-        backend: Backend identifier, e.g. ``"ONNXRuntime"``.
+        backend: Backend identifier, e.g. ``"OpenCV DNN (SFace)"``.
     """
 
     verified: bool
     similarity: float
     threshold: float
     processing_time: float
-    backend: str = "ONNXRuntime"
+    backend: str = "OpenCV DNN (SFace)"
 
 
 def as_tuple(face: Face) -> tuple[int, int, int, int, float]:

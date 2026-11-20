@@ -1,5 +1,5 @@
 # Deployment stack for Coolify and plain Docker. The image bakes every
-# engine's weights (SCRFD, ArcFace, FairFace, MiniFASNet, RapidOCR) and
+# engine's weights (YuNet, SFace, FairFace, MiniFASNet, RapidOCR) and
 # installs every runtime feature (face detection, face verification,
 # face attributes, face anti-spoofing, OCR, MRZ, structured
 # extraction, tracing), so cold start is instant and this file only
@@ -110,7 +110,7 @@ services:
       timeout: 3s
       retries: 5
 
-# Named volume for the engine weights (SCRFD, ArcFace, FairFace,
+# Named volume for the engine weights (YuNet, SFace, FairFace,
 # MiniFASNet, RapidOCR) — survives image swaps and container
 # recreation, shared by any future replicas.
 volumes:

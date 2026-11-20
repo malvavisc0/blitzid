@@ -2,17 +2,17 @@
 FROM python:3.12-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/
 WORKDIR /app
-COPY README.md pyproject.toml uv.lock ./
+COPY README.md LICENSE THIRD_PARTY_NOTICES.md pyproject.toml uv.lock ./
+COPY LICENSES/ LICENSES/
 COPY src/ src/
 COPY scripts/ scripts/
 # Every runtime feature ships in the image: the HTTP API (api), face
-# detection/verification in the core, OCR, MRZ, PDF417 barcode reading
-# (barcode), LLM-backed structured extraction and Langfuse tracing
-# (ocr), and the bundled scripts (scripts). Only the dev toolchain
-# stays out.
-RUN uv sync --frozen --extra api --extra barcode --extra ocr --extra scripts
-# Bake every engine's weights (SCRFD, ArcFace, RapidOCR) so cold start
-# needs no downloads.
+# detection/verification, OCR, MRZ, and LLM-backed structured extraction
+# in the core, PDF417 barcode reading (barcode), and the bundled scripts
+# (scripts). Only the dev toolchain stays out.
+RUN uv sync --frozen --extra api --extra barcode --extra scripts
+# Bake every engine's weights (YuNet, SFace, FairFace, MiniFASNet,
+# RapidOCR) so cold start needs no downloads.
 RUN uv run --no-sync python scripts/download_models.py --models-dir /models
 
 # ── Runtime: venv + baked weights, non-root ─────────────────────
@@ -22,6 +22,7 @@ COPY --from=builder /app /app
 COPY --from=builder /models /models
 ENV BLITZID_BUILD_REVISION=$BLITZID_BUILD_REVISION
 ENV BLITZID_MODELS_DIR=/models
+ENV PYDANTIC_AI_NO_BANNER=1
 ENV PATH=/app/.venv/bin:$PATH
 # Scripts reference fixtures via relative "images/" paths, and the
 # smoke tests run from the repo root.

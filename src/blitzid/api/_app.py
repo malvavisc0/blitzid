@@ -446,7 +446,7 @@ _ENGINE_CHECKS: Mapping[str, Callable[[Engines], bool]] = MappingProxyType(
 
 
 def _ensure_engines(types: list[str], engines: Engines) -> None:
-    """Reject analyses whose engine is unavailable (missing extra/weights)."""
+    """Reject analyses whose engine is unavailable (missing barcode/weights)."""
     unavailable = sorted(
         type_name for type_name in types if _ENGINE_CHECKS[type_name](engines)
     )
@@ -454,11 +454,11 @@ def _ensure_engines(types: list[str], engines: Engines) -> None:
         raise HTTPException(
             400,
             f"analysis engine(s) unavailable: {', '.join(unavailable)}; "
-            "ocr/mrz need the blitzid[ocr] extra, barcode the blitzid[barcode] "
-            "extra, face/attributes/antispoof "
-            "need the SCRFD weights (attributes also FairFace, antispoof also "
-            "MiniFASNet), structured/consistency need the ocr extra and "
-            "BLITZID_LLM_* config",
+            "ocr/mrz need the RapidOCR engine, barcode the blitzid[barcode] "
+            "extra, face/attributes/antispoof need the YuNet weights "
+            "(attributes also FairFace, antispoof also MiniFASNet), and "
+            "structured/consistency need the OCR engine plus BLITZID_LLM_* "
+            "config",
         )
 
 
@@ -545,8 +545,8 @@ def _register_routes(app: FastAPI) -> None:
         if engines.verifier is None or engines.detector is None:
             raise HTTPException(
                 400,
-                "face verification engine unavailable (SCRFD detector and "
-                "ArcFace weights are required)",
+                "face verification engine unavailable (YuNet detector and "
+                "SFace weights are required)",
             )
         if threshold is not None and not -1.0 <= threshold <= 1.0:
             raise HTTPException(422, "threshold must be between -1.0 and 1.0")
@@ -561,7 +561,8 @@ def _register_routes(app: FastAPI) -> None:
         try:
             selected1 = _pick_face(faces1, pinned1, "image1")
             selected2 = _pick_face(faces2, pinned2, "image2")
-            result = engines.verifier.verify_faces(img1, selected1, img2, selected2)
+            with engines.verifier_lock:
+                result = engines.verifier.verify_faces(img1, selected1, img2, selected2)
         except FaceVerificationError as e:
             raise HTTPException(422, str(e)) from e
         if threshold is not None:
@@ -598,7 +599,7 @@ def _register_routes(app: FastAPI) -> None:
         engines: Engines = request.app.state.engines
         if engines.detector is None:
             raise HTTPException(
-                400, "liveness requires the SCRFD detector (face engine)"
+                400, "liveness requires the YuNet detector (face engine)"
             )
         action = request.app.state.challenges.consume(challenge_id)
         if action is None:

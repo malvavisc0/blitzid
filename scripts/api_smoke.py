@@ -2,14 +2,15 @@
 
 Boots the FastAPI app with real weights (plus the configured LLM
 endpoint for the ``structured`` job) and walks the identity flow over
-the committed document fixtures: ``/health``, face counts per document
-type (passport, driver licenses, ID card), ``/api/verify`` with and without
-face pinning (evidence, alternatives, threshold), ``structured`` and
-``consistency`` jobs, and one full passport job covering picture, OCR,
-MRZ, structured fields, and the code-strip cross-check together. This
-is a smoke test: it loads every engine and makes network calls, so it
-is run on demand, not as part of the pytest suite. It uses an
-in-process Redis fake, so no Redis server is needed.
+the committed document fixtures: ``/health``, ``/crop``, a synthetic
+barcode job, face counts per document type (passport, driver licenses,
+ID card), ``/api/verify`` with and without face pinning (evidence,
+alternatives, threshold), ``structured`` and ``consistency`` jobs, and
+one full passport job covering picture, OCR, MRZ, structured fields,
+and the code-strip cross-check together. This is a smoke test: it loads
+every engine and makes network calls, so it is run on demand, not as
+part of the pytest suite. It uses an in-process Redis fake, so no Redis
+server is needed.
 
 Run example::
 
@@ -31,6 +32,7 @@ from unittest.mock import patch
 
 import cv2
 import fakeredis
+import numpy as np
 import redis
 from fastapi.testclient import TestClient
 
@@ -46,6 +48,15 @@ _LICENSES = (
     _IMAGES / "tlc_driver_license_sample.png",
 )
 _CONFERENCE = _IMAGES / "solvay_conference_1927.jpg"
+
+_AAMVA_SAMPLE = (
+    "@\n\x1e\rANSI 636000100102DL00410278ZV03190008DLDAQT64235789\n"
+    "DCSSAMPLE\nDDEN\nDACMICHAEL\nDDFN\nDADJOHN\nDDGN\nDCUJR\nDCAD\n"
+    "DCBK\nDCDPH\nDBD06062019\nDBB06061986\nDBA12102024\nDBC1\n"
+    "DAU068 in\nDAYBRO\nDAG2300 WEST BROAD STREET\nDAIRICHMOND\nDAJVA\n"
+    "DAK232690000  \nDCF2424244747474786102204\nDCGUSA\nDCK123456789\n"
+    "DDAF\nDDB06062018\nDDC06062020\nDDD1\rZVZVA01\r"
+)
 
 _JOB_TIMEOUT = 180.0
 _POLL_INTERVAL = 0.2
@@ -109,6 +120,53 @@ def _check_health(client: TestClient) -> None:
     ), "release metadata mismatch"
     assert client.get("/openapi.json").json()["info"]["version"] == body["version"]
     print(f"  version={body['version']} revision={body['revision']}")
+
+
+def _check_crop(client: TestClient) -> None:
+    print("— /crop (ID card) —")
+    response = client.post(
+        "/api/crop",
+        files={"image": _upload(_ID_CARD)},
+        data={"side": "front"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    print(
+        f"  verdict={body['verdict']} size={body['width']}x{body['height']} "
+        f"face_found={body['face_found']}"
+    )
+    assert body["width"] > 0 and body["height"] > 0, body
+    assert body["crop_base64"], "canonical crop missing"
+    assert body["verdict"] in {"pass", "warn", "reject"}, body
+    assert body["checks"], "quality checks missing"
+
+
+def _check_barcode_job(client: TestClient) -> None:
+    print("— barcode job (synthetic AAMVA PDF417) —")
+    import zxingcpp
+
+    symbol = np.asarray(
+        zxingcpp.create_barcode(
+            _AAMVA_SAMPLE, format=zxingcpp.BarcodeFormat.PDF417
+        ).to_image()
+    )
+    ok, png = cv2.imencode(".png", symbol)
+    assert ok, "could not encode barcode image"
+    response = client.post(
+        "/api/analyze",
+        files={"image": ("barcode.png", png.tobytes(), "image/png")},
+        data={"types": "barcode"},
+    )
+    assert response.status_code == 202, response.text
+    body = _poll(client, response.json()["job_id"])
+    record = _section(body, "barcode")["record"]
+    print(
+        f"  {record['symbology']} {record['jurisdiction']} "
+        f"{record['license_number']} {record['family_name']}"
+    )
+    assert record["symbology"] == "PDF417", record
+    assert record["license_number"] == "T64235789", record
+    assert record["family_name"] == "SAMPLE", record
 
 
 def _check_face_counts(client: TestClient) -> None:
@@ -317,6 +375,8 @@ def main() -> None:
     )
     with TestClient(create_app(store=store)) as client:
         _check_health(client)
+        _check_crop(client)
+        _check_barcode_job(client)
         _check_face_counts(client)
         _check_verify_auto(client)
         _check_verify_pinned(client)

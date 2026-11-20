@@ -1,8 +1,10 @@
 # Composing verification flows with the BlitzID API
 
 Blocks, not a pipeline: every endpoint stands alone, and each product
-picks only what its signup needs. Two kinds of input go in and facts
-come out: photos of a person's face and photos of their documents.
+picks only what its signup needs. Every route lives under `/api`. Two
+kinds of input go in and facts come out: photos of a person's face and
+photos of their documents.
+
 This guide lists the blocks, then recipes of increasing size, and it
 is for the two people who need it: developers wiring a flow into a
 product, and the admin running the service. Every command below runs
@@ -16,14 +18,18 @@ decodes the PDF417 barcode on US and Canadian driver's-license backs,
 compares a selfie to a document portrait, estimates age group, gender,
 and race per face, and cross-checks the copies inside one document.
 
-It does not check liveness (the selfie may be a photo of a screen), it
-does not do tamper forensics on card artwork, it does not join several
-documents into one verdict, and it does not decide who is allowed in.
-Those stay yours. The data for them comes back; the policy does not.
+It checks challenge-response liveness (one random action across three
+frames) and passive anti-spoofing. Certified presentation-attack
+detection, tamper forensics on card artwork, cross-document joins, and
+eligibility policy stay yours. The data for the supported blocks comes
+back; the policy does not.
 
 ## For self-hosted admins
 
 ### Run the stack
+
+Local installs need the `api` extra (`pip install blitzid[api]`); the
+Docker image already includes it.
 
 ```bash
 # production shape (Coolify points here too): baked weights, no mounts
@@ -37,8 +43,10 @@ curl http://localhost:8000/api/health
 
 The image carries every engine's weights, so cold start needs no
 downloads and the container runs as a non-root user against a RAM-only
-Redis. In Coolify, point the service at `docker-compose.yml` and set
-the variables below in its environment tab.
+Redis. The HTTP API has no built-in API-key authentication yet; put it
+behind your own auth proxy or a trusted network boundary. In Coolify,
+point the service at `docker-compose.yml` and set the variables below in
+its environment tab.
 
 ### Configure it
 
@@ -61,24 +69,27 @@ would trust with that.
 
 ### Check it is healthy
 
-`GET /health` returns `200` with eight model flags: `face`, `verify`,
-`attributes`, `antispoof`, `ocr`, `mrz`, `barcode`, `structured`. A
-`false` flag means that analysis returns `400` with the missing piece
-named. `503` means the job store is down and the container cannot
-accept work.
+`GET /api/health` returns `200` with eight model flags: `face`,
+`verify`, `attributes`, `antispoof`, `ocr`, `mrz`, `barcode`,
+`structured`. A `false` flag means that analysis returns `400` with the
+missing piece named. `503` means the job store is down and the
+container cannot accept work.
 
 ## The blocks
 
 | Block | Call | Gives you |
 |---|---|---|
-| Photo quality gate | `POST /crop` | `pass`/`warn`/`reject` verdict, per-check detail, and a corrected crop. Works on documents and selfies alike |
-| Data extraction | `POST /analyze -F types=ocr,mrz,barcode,structured` | printed fields, code-strip fields (check digits validated), the PDF417/AAMVA record from a license back, typed records |
-| Age signal | `POST /analyze -F types=attributes` | age band, gender, and race per face |
-| Spoof signal | `POST /analyze -F types=antispoof` | per-face scores: live, printed photo, screen photo |
-| Document self-check | `POST /analyze -F types=consistency` | printed text vs code strip vs portrait, per-field verdicts |
-| Live selfie | `POST /liveness/challenge` + `POST /liveness/session` | one random action (`turn_head`, `smile`, `move_closer`) verified across three frames |
-| Face match | `POST /verify` | similarity, verdict, and both compared crops as evidence |
-| Health | `GET /health` | which engines are loaded |
+| Document quality gate | `POST /api/crop` | `pass`/`warn`/`reject` verdict, per-check detail, and a corrected document crop |
+| Data extraction | `POST /api/analyze -F types=ocr,mrz,barcode,structured` | printed fields, code-strip fields (check digits validated), the PDF417/AAMVA record from a license back, typed records |
+| Age signal | `POST /api/analyze -F types=attributes` | age band, gender, and race per face |
+| Spoof signal | `POST /api/analyze -F types=antispoof` | per-face scores: live, printed photo, screen photo |
+| Document self-check | `POST /api/analyze -F types=consistency` | printed text vs code strip vs portrait, per-field verdicts |
+| Live selfie | `POST /api/liveness/challenge` + `POST /api/liveness/session` | one random action (`turn_head`, `smile`, `move_closer`) verified across three frames |
+| Face match | `POST /api/verify` | similarity, verdict, and both compared crops as evidence |
+| Health | `GET /api/health` | which engines are loaded |
+
+`barcode` requires the `barcode` extra (`pip install
+blitzid[barcode]`); every other block is in the core install.
 
 ## Recipes
 
@@ -99,7 +110,7 @@ document, run the liveness block first.
 them live: run the liveness block as the gate, then `types=antispoof`
 as a second opinion (a `screen_score` or `paper_score` near 1.0 means
 someone pointed a camera at a photo or display). Add `types=attributes`
-for an age band and `POST /verify` when a previous photo exists.
+for an age band and `POST /api/verify` when a previous photo exists.
 
 **Full document onboarding.** Marketplace, mobility, finance: the
 document-by-document path in the next section.
@@ -135,7 +146,7 @@ certificate, a photo of the plate on the vehicle.
 Capture rules to put in your camera UI: the whole card in frame, glare
 off the holograms, a flat dark surface, no fingers over the edges.
 
-### 3. Check each photo before you trust it
+### 3. Check each document photo before you trust it
 
 ```bash
 curl -F image=@id-front.jpg -F side=front localhost:8000/api/crop
@@ -146,8 +157,8 @@ individual `checks`, and `crop_base64`: the perspective-corrected crop.
 Analyze the crop rather than the raw photo. A `reject` means the card
 was not found or is too small in frame.
 
-A user whose photo just failed is mid-signup and ready to blame their
-phone. Lead with the fix: "Retake the photo: the whole card must be in
+A user whose document photo just failed is mid-signup and ready to
+blame their phone. Lead with the fix: "Retake the photo: the whole card must be in
 frame and the glare off the window."
 
 ### 4. Read everything at once
@@ -166,17 +177,18 @@ Pick types per document:
 | Passport data page | `face,ocr,mrz,structured,consistency` |
 | ID card (back photographed) | `face,ocr,mrz,structured,consistency` |
 | ID card (front only) | `face,ocr,structured` (no code strip to read) |
-| Driver license (back photographed) | `face,ocr,mrz,barcode,structured,consistency` |
+| Driver license (back photographed) | `face,ocr,barcode,structured` (no MRZ; the barcode-vs-print cross-check is not implemented yet) |
 | Driver license (front only) | `face,ocr,structured,attributes` (no barcode or MRZ on the front) |
 | Vehicle registration / insurance | `ocr,structured` |
 | Plate photo | `structured` |
 
-Analyses run as jobs so a slow LLM call never blocks your request
-thread. Poll `GET /jobs/{job_id}` until `status` is `done`, then store
-the body immediately: reading a result claims it, the next read gets
-`410 Gone`, and results expire after `BLITZID_API_JOB_TTL_SECONDS`.
-One job's sections share detection, OCR, and the LLM, so asking for
-all six types costs about one of each.
+`consistency` needs an MRZ, so it does not apply to AAMVA
+barcode-only license backs yet. Analyses run as jobs so a slow LLM call
+never blocks your request thread. Poll `GET /api/jobs/{job_id}` until
+`status` is `done`, then store the body immediately: reading a result
+claims it, the next read gets `410 Gone`, and results expire after
+`BLITZID_API_JOB_TTL_SECONDS`. One job's sections share detection, OCR,
+and the LLM, so asking for every section costs about one of each.
 
 The `structured` section returns typed fields. Its prompts cover
 identity documents, code strips, and plates; other layouts (vehicle
@@ -208,7 +220,7 @@ camera and a model.
 
 ```bash
 curl -F image1=@id-front-crop.jpg -F image2=@selfie.jpg \
-    -F face1_bbox=49,91,84,116 localhost:8000/api/verify
+    -F face1_bbox=49,94,85,114 localhost:8000/api/verify
 ```
 
 Pin the portrait with `face1_bbox` from the `face` section. ID cards
@@ -236,12 +248,12 @@ values come back normalized enough to compare directly.
 
 | Status | What happened | What to do next |
 |---|---|---|
-| `202` from `/analyze` | The job is queued | Poll `GET /jobs/{id}`; keep the id |
-| `200` from `/crop`, `verdict: pass` | Card found, sharp, bright | Keep the crop; analyze the crop |
-| `200` from `/crop`, `verdict: warn` | Usable, one weak check | Continue and lower your confidence in the data |
+| `202` from `/api/analyze` | The job is queued | Poll `GET /api/jobs/{id}`; keep the id |
+| `200` from `/api/crop`, `verdict: pass` | Card found, sharp, bright | Keep the crop; analyze the crop |
+| `200` from `/api/crop`, `verdict: warn` | Usable, one weak check | Continue and lower your confidence in the data |
 | Job `status: done` | One section per requested type | Store the body now; the next read is `410 Gone` |
 | `consistent: true` | Printed text, code strip, and portrait agree | Continue to the selfie match |
-| `200` from `/verify`, `verified: true` | Same person at your threshold | Accept; keep both crops as evidence |
+| `200` from `/api/verify`, `verified: true` | Same person at your threshold | Accept; keep both crops as evidence |
 | `similarity` near your accept/reject edges | Borderline pair | Human review with both crops on screen |
 
 ## When things fail
@@ -249,7 +261,7 @@ values come back normalized enough to compare directly.
 | Status or signal | What happened | What to do | What to show the user |
 |---|---|---|---|
 | `422` | Bad request: unknown type, malformed `face*_bbox`, threshold out of range, or no face where one is needed | Fix the request, or ask for a retake | The retake rule in the first words |
-| `400` | Undecodable bytes, or that engine is missing | Check the file; check `/health` | "We could not read that photo, please try again" |
+| `400` | Undecodable bytes, or that engine is missing | Check the file; check `/api/health` | "We could not read that photo, please try again" |
 | `413` | Over `BLITZID_API_MAX_UPLOAD_MB` | Downscale before upload | "That photo is too large" |
 | `415` | PDF upload | Ask for a photo | "Take a photo instead of a file" |
 | `410` / `404` | Result claimed, expired, or unknown id | Store results at first read | (internal) |
@@ -260,12 +272,12 @@ values come back normalized enough to compare directly.
 
 ## Deciding with thresholds
 
-`verified` is `similarity >= threshold`. The service default is `0.4`;
+`verified` is `similarity >= threshold`. The service default is `0.363`;
 treat it as a starting point. Set three bands from your own traffic:
 accept above some score, reject below some score, and send the middle
 to a human. Two data points to calibrate against: the same photo twice
-scores close to `1.0`, two different people scored `0.05`. Where real
-selfie-versus-document pairs land depends on your users' phones.
+scores close to `1.0`, two different people scored about `0.21`. Where
+real selfie-versus-document pairs land depends on your users' phones.
 
 You can pass `threshold` per request to trial a policy without
 redeploying. Return `similarity`, not just `verified`, to your support

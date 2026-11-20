@@ -10,13 +10,19 @@ text, parse the machine-readable zone, and decode the PDF417 barcode on
 US and Canadian driver's licenses, in one typed Python library that
 runs on an ordinary CPU.
 
-No GPU and no CUDA stack: inference runs on onnxruntime's CPU provider,
-face detection takes about 4 ms per image on a laptop, and the weights
-(SCRFD-2.5G for faces, ArcFace for face verification, PP-OCR for text)
-download on first use. Faces, ID photos, and document scans are
-biometric PII, so the pipeline never sends them anywhere. Everything
-runs in your process, and the optional HTTP API keeps uploads and
-results in RAM only.
+No GPU and no CUDA stack: every built-in model runs on CPU — OpenCV's
+DNN backend for YuNet/SFace and onnxruntime's CPU provider for PP-OCR
+and the attribute/anti-spoof classifiers. Face detection takes
+single-digit milliseconds per image on a laptop, and the weights
+(YuNet, SFace, FairFace, MiniFASNet, PP-OCR) download on first use.
+Structured extraction calls an OpenAI-compatible endpoint you choose; a
+local CPU server is enough, so a GPU remains optional. Faces, ID
+photos, and document scans are biometric PII, so the built-in pipeline
+never sends them anywhere. All built-in inference runs in your process,
+and the optional HTTP API keeps uploads and results in RAM only.
+Structured extraction sends only the OCR text to the endpoint you
+configure, and optional Langfuse tracing exports those spans to the
+Langfuse instance you choose.
 
 ## Why blitzid
 
@@ -44,16 +50,13 @@ results in RAM only.
 ## Installation
 
 ```bash
-pip install blitzid           # or: uv add blitzid
-pip install blitzid[ocr]      # with OCR text reading (RapidOCR)
+pip install blitzid           # includes OCR, MRZ, and structured extraction
 pip install blitzid[barcode]  # with PDF417/AAMVA barcode reading (zxing-cpp)
 pip install blitzid[api]      # with the HTTP API server
 ```
 
-Note: under plain `pip`, RapidOCR pulls in the GUI `opencv-python`
-alongside this package's `opencv-python-headless` (both provide `cv2`).
-Prefer `uv`, which overrides the duplicate away. With `pip`,
-uninstalling `opencv-python` afterwards keeps a working headless `cv2`.
+OCR/MRZ and the LLM-backed structured reader are core; only barcode
+decoding and the HTTP API are optional runtime extras.
 
 ## Quick start
 
@@ -65,15 +68,15 @@ from blitzid import FaceDetectorDNN
 
 detector = FaceDetectorDNN(confidence_threshold=0.5)
 faces = detector.detect_face("images/nl_td1_id_specimen.jpg")
-# [(49, 91, 84, 116, 0.82)]
+# [(49, 94, 85, 114, 0.93)]
 
 records = detector.detect_face_landmarks("images/nl_td1_id_specimen.jpg")
-# [Face(bbox=(49, 91, 84, 116), confidence=0.82,
-#       landmarks=((71.4, 138.2), (111.8, 138.2), (91.2, 164.7),
-#                  (74.1, 179.9), (108.6, 180.2)))]
+# [Face(bbox=(49, 94, 85, 114), confidence=0.93,
+#       landmarks=((72.2, 138.0), (113.5, 137.9), (91.7, 160.0),
+#                  (72.8, 175.9), (108.2, 177.3)))]
 ```
 
-Read the machine-readable zone of a document (`blitzid[ocr]`). Every
+Read the machine-readable zone of a document. Every
 check digit is validated before you see a field:
 
 ```python
@@ -94,7 +97,7 @@ example (1:1 verification, same pipeline DeepFace-style tools use):
 ```python
 from blitzid import FaceVerifier
 
-verifier = FaceVerifier(threshold=0.4)
+verifier = FaceVerifier(threshold=0.363)
 result = verifier.verify("id_portrait.jpg", "selfie.jpg")
 print(result.verified, f"{result.similarity:.3f}")
 # True 0.612
@@ -105,8 +108,8 @@ FaceVerifier.similarity(*embeddings)  # cosine of the two vectors
 
 ## What it does
 
-**Face detection.** SCRFD-2.5G (InsightFace `buffalo_m` ONNX weights)
-through onnxruntime CPU: boxes with confidence, 5-point landmarks
+**Face detection.** YuNet (OpenCV Zoo ONNX weights, MIT) through
+OpenCV's CPU DNN backend: boxes with confidence, 5-point landmarks
 (right eye, left eye, nose tip, mouth corners), padded face crops, NMS
 and size filtering, an optional multi-scale pass for small faces, a
 content-hash LRU cache, batch processing, and bbox visualization.
@@ -114,21 +117,23 @@ Presets: `create_fast_detector`, `create_accurate_detector`,
 `create_balanced_detector`.
 
 **Face verification.** `FaceVerifier` (1:1 comparison) embeds faces
-with ArcFace (InsightFace `buffalo_m` recognition weights) after
-aligning them to the canonical template by their five SCRFD landmarks,
+with SFace (OpenCV Zoo recognition weights, Apache 2.0) after aligning
+them to the canonical 112×112 template by their five YuNet landmarks,
 then compares the L2-normalized vectors by cosine similarity against a
-decision threshold (default 0.4; 0.35–0.5 is the sensible operating
-range, higher is stricter). `verify()` detects and uses the
+decision threshold (default 0.363, OpenCV's recommended cosine
+threshold; 0.3–0.5 is the sensible operating range, higher is
+stricter). `verify()` detects and uses the
 highest-confidence face of each image, `verify_faces()` reuses
 already-detected `Face` records, `embed()` returns a reusable vector,
 and `similarity()` is the cosine of two embeddings. Same photo, or
 re-encoded/rescaled copy? Verification of an image against itself
-scores ~1.0; different people land near 0.
+scores ~1.0; different people land well below the 0.363 threshold
+(about 0.21 for the conference fixture pair).
 
-**Text reading.** `RapidOCRReader` (the `ocr` extra) returns text lines
+**Text reading.** `RapidOCRReader` (core) returns text lines
 as `OCRText` records: bbox, text, confidence, sorted by confidence.
 
-**MRZ parsing.** `MRZReader` (same extra) selects the ICAO 9303 zone
+**MRZ parsing.** `MRZReader` (core) selects the ICAO 9303 zone
 from OCR output, reassembles the lines by position, validates every
 check digit plus the letter-only fields (document code, issuer,
 nationality), and parses TD1 (3x30), TD2 (2x36), and TD3 (2x44) into an
@@ -145,18 +150,19 @@ subfile offsets, lengths, and number-of-entries count are validated and
 the mandatory fields are gated, so a malformed payload raises
 `BarcodeError` naming the offending field.
 
-**Structured extraction.** `StructuredOCRReader` (same extra) feeds the
+**Structured extraction.** `StructuredOCRReader` (core) feeds the
 OCR lines to an OpenAI-compatible chat endpoint (e.g. a local vLLM
 server) and returns a typed `StructuredOCR` record; fields the model
 cannot recover are omitted instead of hallucinated, date fields come
 back as `datetime.date`, text values are upper-cased by the reader, and
 the `document_type` is a closed vocabulary (`id`, `plate`, `mrz`,
 `unknown`). Endpoint via `BLITZID_LLM_BASE_URL` / `BLITZID_LLM_API_KEY`
-/ `BLITZID_LLM_MODEL`. Tracing is opt-in via the standard Langfuse SDK
-variables (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`, optionally
-`LANGFUSE_BASE_URL`): every LLM call is exported as an OpenTelemetry
-trace. Note the spans carry the OCR text (names, document numbers,
-dates) — point `LANGFUSE_BASE_URL` at an instance you control.
+/ `BLITZID_LLM_MODEL` (all three required). Tracing is opt-in via the
+standard Langfuse SDK variables (`LANGFUSE_PUBLIC_KEY` /
+`LANGFUSE_SECRET_KEY`, optionally `LANGFUSE_BASE_URL`): every LLM call
+is exported as an OpenTelemetry trace. Note the spans carry the OCR
+text (names, document numbers, dates) — point `LANGFUSE_BASE_URL` at an
+instance you control.
 
 **Document crop and QC.** `DocumentCropper` (classical CV, no model)
 finds the document quadrilateral, warps it flat at its own aspect, and
@@ -168,9 +174,9 @@ face). Returns the crop plus a `QualityReport` verdict.
 **HTTP API and Docker.** The `api` extra adds a FastAPI service: an
 async job queue (Redis, persistence disabled) for
 face/attributes/antispoof/OCR/MRZ/barcode/structured/consistency,
-synchronous `/crop` (document QC), `/verify` (1:1 face comparison), and
-`/liveness` (challenge-response liveness), and `/health` for
-orchestration.
+synchronous `/api/crop` (document QC), `/api/verify` (1:1 face
+comparison), and `/api/liveness/...` (challenge-response liveness), and
+`/api/health` for orchestration.
 `docker compose up` runs it with all weights baked in.
 
 **Inputs.** File paths, NumPy arrays, and PIL Images.
@@ -179,7 +185,8 @@ orchestration.
 
 The `api` extra (`pip install blitzid[api]`) adds an HTTP service over
 the library: async jobs for the analyses, synchronous document-QC and
-face-verification endpoints, and a health check. Docker is the primary
+face-verification endpoints, and a health check. Every route lives under
+`/api`. Docker is the primary
 deployment: the image bakes all weights for instant cold start and
 talks to a RAM-only Redis. [`docker-compose.yml`](docker-compose.yml)
 is deploy-ready for Coolify (set the `BLITZID_LLM_*` variables in the
@@ -191,7 +198,7 @@ docker compose up
 curl http://localhost:8000/api/health
 ```
 
-**POST /analyze** submits a job (`multipart/form-data`): an `image`
+**POST /api/analyze** submits a job (`multipart/form-data`): an `image`
 file (any OpenCV-decodable format; PDFs get a precise `415`) and
 `types` (repeated and/or comma-separated: `face`, `attributes`,
 `antispoof`, `ocr`,
@@ -206,18 +213,18 @@ and gender against the birth date and sex; the photo rows need the
 `BLITZID_LLM_*` config).
 Validation is eager, before the job exists: `422` unknown type or
 missing fields, `400` undecodable bytes or an analysis whose engine is
-unavailable (`ocr`/`mrz` without the `ocr` extra, `barcode` without the
-`barcode` extra, `structured`/`consistency` without
-the extra or the LLM config), `413` above the
+unavailable (`ocr`/`mrz` when the RapidOCR engine failed to start,
+`barcode` without the `barcode` extra, `structured`/`consistency` when
+the OCR or LLM engine is unavailable), `413` above the
 upload cap, `503` + `Retry-After` when the queue is full or Redis is
 down. Accepted jobs return `202`:
 
 ```bash
 curl -F image=@id.jpg -F types=face,ocr localhost:8000/api/analyze
-# {"job_id": "<uuid>", "status": "queued", "status_url": "/jobs/<uuid>"}
+# {"job_id": "<uuid>", "status": "queued", "status_url": "/api/jobs/<uuid>"}
 ```
 
-**GET /jobs/{job_id}** polls: `{"status": "queued"}` / `running`; done
+**GET /api/jobs/{job_id}** polls: `{"status": "queued"}` / `running`; done
 returns `200` with one section per requested type (`face`,
 `attributes`, `antispoof`, `ocr`,
 `mrz`, `barcode`, `structured`, `consistency`; a failing section carries
@@ -227,7 +234,8 @@ read gets `410 Gone`; unknown ids get `404` (an expired job reads `410` until
 twice the TTL past submission, then `404`); results expire after
 `BLITZID_API_JOB_TTL_SECONDS` (default 900).
 
-What a done result looks like on the specimen ID (abbreviated):
+What a done result looks like (abbreviated; timings and model
+confidences are illustrative):
 
 ```json
 {
@@ -235,17 +243,17 @@ What a done result looks like on the specimen ID (abbreviated):
   "face": {
     "faces": [
       {
-        "bbox": [49, 91, 84, 116],
-        "confidence": 0.82,
-        "landmarks": [[71.4, 138.2], [111.8, 138.2], [91.2, 164.7], [74.1, 179.9], [108.6, 180.2]],
+        "bbox": [49, 94, 85, 114],
+        "confidence": 0.93,
+        "landmarks": [[72.2, 138.0], [113.5, 137.9], [91.7, 160.0], [72.8, 175.9], [108.2, 177.3]],
         "crop_base64": "/9j/4AAQSkZJRgABAQAAAQAB…"
       }
     ],
     "processing_time_ms": 39.1
   },
   "attributes": {
-    "faces": [{"bbox": [49, 91, 84, 116], "confidence": 0.82,
-               "age": "20-29", "gender": "Female",
+    "faces": [{"bbox": [49, 94, 85, 114], "confidence": 0.93,
+               "age": "40-49", "gender": "Female",
                "race": "White", "age_confidence": 0.6,
                "gender_confidence": 0.95, "race_confidence": 0.7}],
     "processing_time_ms": 96.4
@@ -320,8 +328,8 @@ On a US driver's-license back, a `barcode` section looks like this:
 }
 ```
 
-**POST /crop** is synchronous document QC (contour detection plus one
-SCRFD pass runs in tens of ms): the perspective-corrected canonical
+**POST /api/crop** is synchronous document QC (contour detection plus one
+YuNet pass runs in tens of ms): the perspective-corrected canonical
 crop plus quality checks (`document_found`, `aspect_ratio`,
 `resolution`, `sharpness`, `brightness`, and the side-aware
 `face_present`, which never fails a document). Optional `side` field
@@ -334,36 +342,36 @@ curl -F image=@id.jpg localhost:8000/api/crop
 #  "verdict": "pass"}
 ```
 
-The crop is the canonical image to keep and to re-submit to `/analyze`
+The crop is the canonical image to keep and to re-submit to `/api/analyze`
 for cleaner OCR/MRZ.
 
-**POST /verify** is synchronous 1:1 face comparison: multipart fields
-`image1` and `image2` (same upload rules as `/analyze`) and two
+**POST /api/verify** is synchronous 1:1 face comparison: multipart fields
+`image1` and `image2` (same upload rules as `/api/analyze`) and two
 optional knobs — `threshold` (`-1.0`–`1.0`, overriding the service
-default `0.4`) and `face1_bbox` / `face2_bbox` (`x,y,w,h` pinning
-which face to compare, e.g. a box from a prior `/analyze` face result;
+default `0.363`) and `face1_bbox` / `face2_bbox` (`x,y,w,h` pinning
+which face to compare, e.g. a box from a prior `/api/analyze` face result;
 handy when a document carries a ghost portrait). Unpinned images use
 the highest-confidence face. The chosen faces are aligned to the
-ArcFace template and compared by cosine similarity; an image with no
+SFace template and compared by cosine similarity; an image with no
 usable face is `422`. The response is the verdict plus the evidence
 used: each compared face with its `bbox`, `confidence`, a
 `crop_base64` thumbnail, and `alternatives` listing the candidates
-that were not picked. The verifier (SCRFD + ArcFace weights) loads at
+that were not picked. The verifier (YuNet + SFace weights) loads at
 service startup alongside the other engines and shows as `verify` in
-`/health`, so the first call carries no warm-up at the cost of the
-extra weights in every deployment's memory:
+`/api/health`, so the first call carries no warm-up at the cost of
+loading the additional weights in every deployment:
 
 ```bash
 curl -F image1=@id.jpg -F image2=@selfie.jpg localhost:8000/api/verify
-# {"verified": true, "similarity": 0.71, "threshold": 0.4,
-#  "face1": {"bbox": [49, 91, 84, 116], "confidence": 0.82,
+# {"verified": true, "similarity": 0.71, "threshold": 0.363,
+#  "face1": {"bbox": [49, 94, 85, 114], "confidence": 0.93,
 #            "crop_base64": "/9j/4AAQ…", "alternatives": []},
 #  "face2": {"bbox": [402, 90, 470, 560], "confidence": 0.97,
 #            "crop_base64": "/9j/4AAQ…", "alternatives": []},
-#  "processing_time_ms": 241.5, "backend": "ONNXRuntime"}
+#  "processing_time_ms": 42.0, "backend": "OpenCV DNN (SFace)"}
 ```
 
-**GET /health** reports engine, Redis, and job availability for
+**GET /api/health** reports engine, Redis, and job availability for
 container orchestration. It returns `503` when the job store is
 unreachable (the container is unhealthy: it cannot accept or process
 jobs); a missing engine stays `200` with its `models` flag false, since
@@ -390,11 +398,14 @@ the package public or `docker login ghcr.io` to pull.
 
 ## API reference
 
+The HTTP API does not implement API-key authentication yet; run it
+behind your own auth proxy or on a trusted network.
+
 All public symbols are exported from [`blitzid`](src/blitzid/__init__.py).
 
 ### `FaceDetectorDNN`
 
-Defined in [`face/detector.py`](src/blitzid/face/detector.py). The primary SCRFD-based detector (CPU inference via onnxruntime).
+Defined in [`face/detector.py`](src/blitzid/face/detector.py). The primary YuNet-based detector (CPU inference via OpenCV DNN).
 
 | Method | Description |
 |---|---|
@@ -432,41 +443,41 @@ Dataclass defined in [`face/_face.py`](src/blitzid/face/_face.py).
 | `faces` | `list[Face]` | Detected face records |
 | `processing_time` | `float` | Inference time in seconds |
 | `image_size` | `(w, h)` | Input image dimensions |
-| `backend` | `str` | `"ONNXRuntime"` |
+| `backend` | `str` | `"OpenCV DNN (YuNet)"` |
 | `num_faces` | `int` | Number of faces detected |
 | `cache_hit` | `bool` | Whether the result came from cache |
 
 ### `FaceVerifier`
 
 Defined in [`face/verifier.py`](src/blitzid/face/verifier.py). 1:1 face
-verification: ArcFace embeddings (InsightFace `buffalo_m` recognition
-weights, CPU inference via onnxruntime) over landmark-aligned faces,
-compared by cosine similarity.
+verification: SFace embeddings (OpenCV Zoo recognition weights, CPU
+inference via OpenCV DNN) over landmark-aligned faces, compared by
+cosine similarity.
 
 | Method | Description |
 |---|---|
 | `verify(image_input1, image_input2)` | Detects the best face in each image; returns a `VerificationResult` |
 | `verify_faces(image_input1, face1, image_input2, face2)` | Verifies two already-detected `Face` records (no re-detection) |
-| `embed(image_input, face=None)` | L2-normalized 512-d ArcFace embedding; detects the best face when `face` is omitted |
+| `embed(image_input, face=None)` | L2-normalized 128-d SFace embedding; detects the best face when `face` is omitted |
 | `similarity(embedding1, embedding2)` | Cosine similarity of two embeddings (static) |
 
-The constructor takes a `threshold` (default `0.4`; verified when
+The constructor takes a `threshold` (default `0.363`; verified when
 `similarity >= threshold`), an optional `detector` (a `FaceDetectorDNN`
 to reuse instead of the internal default), `model_dir`, and
-`allow_downloads`. When `model_dir` is omitted, the ArcFace weights are
+`allow_downloads`. When `model_dir` is omitted, the SFace weights are
 looked up in the supplied detector's models directory, else the default
 models dir. Raises `FaceVerificationError` when an image holds no
 detectable face.
 
 **`VerificationResult`** — frozen dataclass: `verified` (bool),
 `similarity` (cosine in `[-1, 1]`), `threshold`, `processing_time`
-(end-to-end seconds), `backend` (`"ONNXRuntime"`).
+(end-to-end seconds), `backend` (`"OpenCV DNN (SFace)"`).
 
 ```python
 from blitzid import FaceDetectorDNN, FaceVerifier
 
 detector = FaceDetectorDNN()
-verifier = FaceVerifier(detector=detector, threshold=0.4)
+verifier = FaceVerifier(detector=detector, threshold=0.363)
 
 faces = detector.detect_face_landmarks("id_card.jpg")
 selfie = detector.detect_face_landmarks("selfie.jpg")
@@ -475,8 +486,8 @@ result = verifier.verify_faces("id_card.jpg", faces[0], "selfie.jpg", selfie[0])
 
 ### `RapidOCRReader`
 
-Defined in [`reading/ocr.py`](src/blitzid/reading/ocr.py); requires the `ocr` extra
-(`pip install blitzid[ocr]`). Reads text lines from document images via
+Defined in [`reading/ocr.py`](src/blitzid/reading/ocr.py).
+Reads text lines from document images via
 RapidOCR (PP-OCR ONNX models on onnxruntime CPU).
 
 | Method | Description |
@@ -525,8 +536,8 @@ use, pinned like the rest).
 the three model scores `live_score`, `paper_score`, `screen_score`.
 Treat it as an advisory layer: it catches printed and screen photos of
 still images, not video replay of a moving person and not generated
-faces. The `/liveness` challenge is the gate; this is the second
-opinion.
+faces. The `/api/liveness/challenge` + `/api/liveness/session` block is
+the gate; this is the second opinion.
 
 ### `FaceAttributeReader`
 
@@ -549,7 +560,7 @@ particular must not drive decisions about people.
 
 ### `MRZReader`
 
-Defined in [`reading/mrz.py`](src/blitzid/reading/mrz.py); requires the `ocr` extra.
+Defined in [`reading/mrz.py`](src/blitzid/reading/mrz.py).
 Selects MRZ lines from OCR text, validates them via ICAO 9303 check
 digits, and parses TD1 (3x30, ID cards), TD2 (2x36), and TD3 (2x44,
 passports) zones. Obvious OCR confusions (0/O, 1/I, …) are resolved by
@@ -607,7 +618,7 @@ print(record.aamva_version, record.family_name, record.expiry_date)
 ### `StructuredOCRReader`
 
 Defined in [`reading/structurize.py`](src/blitzid/reading/structurize.py);
-requires the `ocr` extra (`pip install blitzid[ocr]`). Reconstructs a
+included in blitzid; configure the LLM endpoint below. Reconstructs a
 typed record from OCR text lines via an LLM on an OpenAI-compatible
 endpoint (`BLITZID_LLM_BASE_URL`, `BLITZID_LLM_API_KEY`, and
 `BLITZID_LLM_MODEL` environment variables or the matching constructor
@@ -689,12 +700,12 @@ graph TD
     B --> E[_models.py<br/>ModelManager · models dir]
     B --> F[_image.py<br/>load_image · ImageInput]
     B --> G[face/_face.py<br/>Face · DetectionMetrics · cache]
-    B --> H[face/_scrfd.py<br/>decode · letterbox]
+    B --> H[face/_yunet.py<br/>map · letterbox]
     N --> B
     N --> E
     N --> F
     N --> G
-    N --> J[face/_arcface.py<br/>align · embed]
+    N --> J[face/_sface.py<br/>align · embed]
     C --> E
     C --> F
     M --> F
@@ -706,8 +717,8 @@ not part of the library import graph above.
 
 ## Models
 
-`FaceDetectorDNN` runs the **SCRFD-2.5G** face detector (InsightFace
-`buffalo_m` detection weights) through an **onnxruntime CPU** session.
+`FaceDetectorDNN` runs the **YuNet** face detector (OpenCV Zoo
+2026may ONNX export, MIT, ~230 KB) through OpenCV's **CPU DNN** backend.
 The ONNX file is downloaded automatically on first use and reused
 afterwards. There is no fallback to other models or providers: a
 missing or unloadable model raises `ModelError`. Inference input size is
@@ -715,15 +726,17 @@ configurable via `det_size` (default `640x640`, multiples of 32); images
 are letterboxed to preserve aspect ratio and boxes are mapped back to
 original image coordinates.
 
-`FaceVerifier` runs the **ArcFace** face recognizer (InsightFace
-`buffalo_m` recognition weights, ~174 MB, 512-d embeddings) through the
-same onnxruntime CPU profile: faces are aligned to the canonical
-112×112 ArcFace template by their five SCRFD landmarks, embedded, and
-compared by cosine similarity against the decision threshold. The same
-no-fallback rule applies.
+`FaceVerifier` runs the **SFace** recognizer (OpenCV Zoo 2021dec ONNX
+export, Apache 2.0, ~39 MB, 128-d embeddings) through the same OpenCV
+CPU DNN backend: faces are aligned to the canonical 112×112 SFace
+template by their five YuNet landmarks, embedded, and compared by
+cosine similarity against the decision threshold. The same no-fallback
+rule applies.
 
 `RapidOCRReader` runs RapidOCR's **PP-OCR** ONNX models (detection,
-classification, recognition) through the same onnxruntime CPU profile.
+classification, recognition) through onnxruntime's CPU provider. The
+FairFace attribute model and MiniFASNet anti-spoof model use the same
+onnxruntime CPU profile.
 
 Weights live in the default models dir: `BLITZID_MODELS_DIR` when set,
 else `user_cache_dir("blitzid")/models/`. Pre-fetch everything for a
@@ -733,28 +746,28 @@ Docker image with `python scripts/download_models.py` (default target:
 ## Performance
 
 Rough single-image timings from [`scripts/benchmark.py`](scripts/benchmark.py)
-(11th Gen Intel Core i7-11850H; python 3.13, onnxruntime 1.30, x86_64;
-median of 20 warm runs; init is the median of 5 constructions):
+(11th Gen Intel Core i7-11850H; python 3.13, opencv 5.1, onnxruntime
+1.32, x86_64; median of 20 warm runs; init is the median of 5
+constructions):
 
 | Pipeline | Benchmark | Init (ms) | Median (ms) |
 |---|---|---|---|
-| fast | `detect_face` (specimen ID card) | 14 | 4 |
-| balanced | `detect_face` (specimen ID card) | 15 | 4 |
-| accurate | `detect_face` (specimen ID card) | 14 | 28 |
-| balanced | `detect_face_with_metrics` (cache hit) | — | 5 |
-| FaceVerifier | `verify` (specimen ID card, same image twice) | 200 | 173 |
-| RapidOCRReader | `read` (specimen ID card) | 798 | 903 |
-| MRZReader | `read` (specimen ID card) | 913 | 910 |
+| fast | `detect_face` (specimen ID card) | 2.5 | 6.9 |
+| balanced | `detect_face` (specimen ID card) | 2.3 | 9.2 |
+| accurate | `detect_face` (specimen ID card) | 2.3 | 8.3 |
+| balanced | `detect_face_with_metrics` (cache hit) | — | 3.7 |
+| FaceVerifier | `verify` (specimen ID card, same image twice) | 32.2 | 26.5 |
+| RapidOCRReader | `read` (specimen ID card) | 753.3 | 918.9 |
+| MRZReader | `read` (specimen ID card) | 927.4 | 956.6 |
 
 The benchmark reports the CPU model automatically, so results files in
 `results/` carry the same context. Re-run locally with
-`uv run python scripts/benchmark.py --markdown`; the `ocr` benchmarks
-are skipped without the `ocr` extra. Numbers vary by machine: treat
-them as ballpark figures, not guarantees. Inside one process the
-onnxruntime sessions are created without intra-op spin-waiting
-(`session.intra_op.allow_spinning=0`), so engines that run back to
-back (detector, then recognizer) do not fight each other for cores;
-outputs are bit-identical to the default session profile.
+`uv run python scripts/benchmark.py --markdown`. Numbers vary by machine: treat
+them as ballpark figures, not guarantees. The detector and recognizer
+run in OpenCV's CPU DNN engine; the onnxruntime sessions (OCR,
+attributes, anti-spoof) are created without intra-op spin-waiting
+(`session.intra_op.allow_spinning=0`), so they do not steal cores from
+the OpenCV passes.
 
 ## Demo
 
@@ -766,8 +779,7 @@ python scripts/face_detector_demo.py --preset balanced --run all \
     --image images/bub_der_personalausweis_kopie.jpg
 ```
 
-An OCR demo is available at [`scripts/ocr_demo.py`](scripts/ocr_demo.py)
-(requires `blitzid[ocr]`):
+An OCR demo is available at [`scripts/ocr_demo.py`](scripts/ocr_demo.py):
 
 ```bash
 python scripts/ocr_demo.py --image images/bub_der_personalausweis_kopie.jpg
@@ -793,15 +805,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines and
 
 ## Credits
 
-- [InsightFace](https://github.com/deepinsight/insightface) for the
-  SCRFD-2.5G detector and the `buffalo_m` detection and recognition
-  weights
+- [OpenCV Zoo](https://github.com/opencv/opencv_zoo) for the YuNet
+  detector (MIT) and SFace recognizer (Apache 2.0)
+- [OpenCV](https://opencv.org/) for the CPU DNN backend
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) for the PP-OCR text
   recognition pipeline
+- [FairFace](https://github.com/joojs/fairface) for the attribute model
+  and [MiniFASNet](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing)
+  for passive anti-spoofing
 - [ONNX Runtime](https://onnxruntime.ai) for CPU inference
 - [ICAO Doc 9303](https://www.icao.int/) for the machine-readable
   travel document specifications behind the MRZ parser
 
 ## License
 
-[MIT](LICENSE)
+blitzid's code is [MIT](LICENSE). Model weights keep their upstream
+licenses (YuNet MIT, SFace Apache-2.0, FairFace CC BY 4.0, MiniFASNet
+and PP-OCR Apache-2.0); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+for attribution and license texts.

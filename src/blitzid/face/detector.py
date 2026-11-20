@@ -1,8 +1,8 @@
-"""FaceDetectorDNN — the SCRFD-based face detector.
+"""FaceDetectorDNN — the YuNet-based face detector.
 
-Runs the SCRFD-2.5G ONNX model via an onnxruntime CPU session, with an
-optional LRU result cache, multi-scale detection, NMS + size filtering,
-crop extraction, batch processing, and bbox visualization.
+Runs the OpenCV Zoo YuNet ONNX model through OpenCV's CPU DNN backend,
+with an optional LRU result cache, multi-scale detection, NMS + size
+filtering, crop extraction, batch processing, and bbox visualization.
 """
 
 from __future__ import annotations
@@ -26,14 +26,13 @@ from blitzid.face._face import (
     compute_hash,
     draw_detections,
 )
-from blitzid.face._scrfd import (
-    SCRFD_STRIDES,
-    anchor_centers,
-    decode_outputs,
+from blitzid.face._yunet import (
+    YUNET_MODEL_FILENAME,
+    YUNET_MODEL_SHA256,
+    YUNET_MODEL_URL,
+    create_detector,
     letterbox_image,
-    map_detections_to_faces,
-    to_blob,
-    validate_architecture,
+    map_yunet_faces,
 )
 
 __all__ = ["DetectionMetrics", "Face", "FaceDetectorDNN"]
@@ -124,15 +123,21 @@ class FaceDetectorDNN:
         self.logger.setLevel(log_level)
 
         self.model_manager = ModelManager(
-            model_dir, self.logger, allow_downloads=allow_downloads
+            model_dir,
+            self.logger,
+            allow_downloads=allow_downloads,
+            filename=YUNET_MODEL_FILENAME,
+            url=YUNET_MODEL_URL,
+            sha256=YUNET_MODEL_SHA256,
         )
-        self.session = self.model_manager.load_session()
-        self.backend = "ONNXRuntime"
-
-        # SCRFD ONNX export order: 3x scores (N,1), 3x boxes (N,4), 3x keypoints.
-        self._input_name = self.session.get_inputs()[0].name
-        self._output_names = [output.name for output in self.session.get_outputs()]
-        validate_architecture(len(self._output_names))
+        self.model_manager.ensure_model_exists()
+        self._detector = create_detector(
+            self.model_manager.model_path,
+            det_size,
+            confidence_threshold,
+            nms_threshold,
+        )
+        self.backend = "OpenCV DNN (YuNet)"
 
         self.confidence_threshold = confidence_threshold
         self.min_face_size = min_face_size
@@ -140,12 +145,6 @@ class FaceDetectorDNN:
         self.multi_scale = bool(multi_scale)
         self.scales = _normalize_scales(scales)
         self.det_size = det_size
-
-        det_w, det_h = det_size
-        self._anchors = tuple(
-            anchor_centers(det_h // stride, det_w // stride, stride)
-            for stride in SCRFD_STRIDES
-        )
 
         self._cache = LRUCache(max_cache_size) if enable_cache else None
 
@@ -157,11 +156,10 @@ class FaceDetectorDNN:
     ) -> FaceDetectorDNN:
         """Speed-optimized preset.
 
-        Infers at 480x480 instead of 640x640: on document-sized inputs
-        the same faces come back (detector scores unchanged within a few
-        hundredths) in about 60% of the time. Faces below the preset's
-        80 px minimum are filtered anyway, so the smaller grid costs no
-        recall the preset would have kept.
+        Uses a 480x480 input with a higher confidence floor and an 80 px
+        minimum size. Document portraits are large, so the smaller input
+        keeps the same faces while dropping marginal detections; caching
+        is enabled for repeated inputs.
         """
         return cls(
             confidence_threshold=0.7,
@@ -399,21 +397,17 @@ class FaceDetectorDNN:
         """Whether result caching is enabled on this detector."""
         return self._cache is not None
 
-    def _run_detection(self, img: np.ndarray) -> list[Face]:
-        """SCRFD forward pass on a single-scale image."""
+    def _run_detection(
+        self, img: np.ndarray, det_size: tuple[int, int] | None = None
+    ) -> list[Face]:
+        """YuNet forward pass at *det_size* (default: the configured size)."""
         h, w = img.shape[:2]
-        letterboxed, scale = letterbox_image(img, self.det_size)
-        blob = to_blob(letterboxed)
-        net_outs = self.session.run(self._output_names, {self._input_name: blob})
-
-        detections = decode_outputs(
-            net_outs[:3],
-            net_outs[3:6],
-            net_outs[6:9],
-            self._anchors,
-            self.confidence_threshold,
-        )
-        return map_detections_to_faces(detections, scale, (w, h))
+        size = self.det_size if det_size is None else det_size
+        letterboxed, scale = letterbox_image(img, size)
+        self._detector.setInputSize(size)
+        _, raw_faces = self._detector.detect(letterboxed)
+        faces = None if raw_faces is None else np.asarray(raw_faces, dtype=np.float32)
+        return map_yunet_faces(faces, scale, (w, h))
 
     def _run_detection_multi_scale(self, img: np.ndarray) -> list[Face]:
         """Run detection across multiple scales and map boxes back."""
@@ -430,7 +424,11 @@ class FaceDetectorDNN:
                 scaled = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                 s = float(scale)
 
-            faces_scaled = self._run_detection(scaled)
+            scaled_det_size = (
+                max(32, round(self.det_size[0] * s / 32) * 32),
+                max(32, round(self.det_size[1] * s / 32) * 32),
+            )
+            faces_scaled = self._run_detection(scaled, scaled_det_size)
 
             if abs(s - 1.0) < 1e-9:
                 all_faces.extend(faces_scaled)

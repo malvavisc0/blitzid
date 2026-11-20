@@ -1,7 +1,7 @@
-"""Unit tests for blitzid.face.detector and blitzid.face._scrfd pure helpers.
+"""Unit tests for blitzid.face.detector and blitzid.face._yunet helpers.
 
-Covers SCRFD decode, IoU, NMS, filter, cache, scales, and draw.
-All tests are pure-function / fast, no model required.
+Covers IoU, NMS, filter, cache, scales, letterboxing, YuNet mapping, and
+drawing. All tests are pure-function / fast, no model required.
 """
 
 from __future__ import annotations
@@ -9,20 +9,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blitzid.exceptions import BlitzIDError, ModelError
+from blitzid.exceptions import BlitzIDError
 from blitzid.face._face import Face, LRUCache, compute_hash, draw_detections
-from blitzid.face._scrfd import (
-    SCRFD_INPUT_MEAN,
-    SCRFD_INPUT_STD,
-    anchor_centers,
-    decode_outputs,
-    distance2bbox,
-    distance2kps,
-    letterbox_image,
-    map_detections_to_faces,
-    to_blob,
-    validate_architecture,
-)
+from blitzid.face._yunet import letterbox_image, map_yunet_faces
 from blitzid.face.detector import (
     _apply_nms,
     _calculate_iou,
@@ -191,32 +180,6 @@ class TestDrawDetections:
         np.testing.assert_array_equal(result, img)
 
 
-class TestValidateSCRFDArchitecture:
-    def test_expected_nine_outputs(self) -> None:
-        validate_architecture(9)
-
-    def test_unexpected_output_count_raises(self) -> None:
-        with pytest.raises(ModelError, match="Unsupported SCRFD architecture"):
-            validate_architecture(6)
-
-
-class TestAnchorCenters:
-    def test_shape_and_layout(self) -> None:
-        centers = anchor_centers(2, 2, 8)
-        assert centers.shape == (8, 2)
-        expected = [
-            (0, 0),
-            (0, 0),
-            (8, 0),
-            (8, 0),
-            (0, 8),
-            (0, 8),
-            (8, 8),
-            (8, 8),
-        ]
-        np.testing.assert_allclose(centers, expected)
-
-
 class TestLetterboxImage:
     def test_pads_wide_image(self) -> None:
         img = np.zeros((100, 200, 3), dtype=np.uint8)
@@ -233,119 +196,49 @@ class TestLetterboxImage:
         assert scale == 1.0
 
 
-class TestToBlob:
-    def test_matches_reference_normalization_exactly(self) -> None:
-        rng = np.random.default_rng(0)
-        img = rng.integers(0, 256, (64, 96, 3), dtype=np.uint8)
-        reference = (
-            img[..., ::-1].transpose(2, 0, 1)[np.newaxis].astype(np.float32)
-            - SCRFD_INPUT_MEAN
-        ) / SCRFD_INPUT_STD
-        blob = to_blob(img)
-        assert blob.shape == (1, 3, 64, 96)
-        assert blob.dtype == np.float32
-        assert blob.flags["C_CONTIGUOUS"]
-        assert np.array_equal(blob, reference)
-
-    def test_swaps_bgr_to_rgb(self) -> None:
-        img = np.zeros((8, 8, 3), dtype=np.uint8)
-        img[..., 0] = 255  # blue channel only
-        blob = to_blob(img)
-        assert blob[0, 2].max() > 0.99
-        assert blob[0, 0].max() < 0
+def _yunet_row(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    landmarks: tuple[tuple[float, float], ...],
+    score: float,
+) -> np.ndarray:
+    row = [x, y, w, h]
+    for px, py in landmarks:
+        row.extend([px, py])
+    row.append(score)
+    return np.asarray([row], dtype=np.float32)
 
 
-class TestDistance2BoxAndKps:
-    def test_bbox_corner_coordinates(self) -> None:
-        centers = np.array([[100.0, 100.0]], dtype=np.float32)
-        dist = np.array([[10.0, 20.0, 30.0, 40.0]], dtype=np.float32)
-        box = distance2bbox(centers, dist)
-        np.testing.assert_allclose(box, [[90.0, 80.0, 130.0, 140.0]])
-
-    def test_kps_point_coordinates(self) -> None:
-        centers = np.array([[100.0, 100.0]], dtype=np.float32)
-        dist = np.array(
-            [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]], dtype=np.float32
-        )
-        kps = distance2kps(centers, dist)
-        assert kps.shape == (1, 5, 2)
-        np.testing.assert_allclose(
-            kps[0],
-            [
-                [101.0, 102.0],
-                [103.0, 104.0],
-                [105.0, 106.0],
-                [107.0, 108.0],
-                [109.0, 110.0],
-            ],
-        )
-
-
-class TestDecodeScrfdOutputs:
-    @staticmethod
-    def _levels(
-        scores: np.ndarray, boxes: np.ndarray, kps: np.ndarray
-    ) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
-        zeros_scores = np.zeros((2, 1), dtype=np.float32)
-        zeros_boxes = np.zeros((2, 4), dtype=np.float32)
-        zeros_kps = np.zeros((2, 10), dtype=np.float32)
-        return (
-            [scores, zeros_scores, zeros_scores],
-            [boxes, zeros_boxes, zeros_boxes],
-            [kps, zeros_kps, zeros_kps],
-            [
-                anchor_centers(1, 1, 8),
-                anchor_centers(1, 1, 16),
-                anchor_centers(1, 1, 32),
-            ],
-        )
-
-    def test_threshold_filters_and_scales(self) -> None:
-        scores = np.array([[0.9], [0.2]], dtype=np.float32)
-        boxes = np.array([[1.0, 2.0, 3.0, 4.0], [1.0, 1.0, 1.0, 1.0]], dtype=np.float32)
-        kps = np.zeros((2, 10), dtype=np.float32)
-        score_out, box_out, kps_out, anchors = self._levels(scores, boxes, kps)
-
-        detections = decode_outputs(score_out, box_out, kps_out, anchors, threshold=0.5)
-
-        assert len(detections) == 1
-        x1, y1, x2, y2, conf, landmarks = detections[0]
-        assert (x1, y1, x2, y2) == (-8.0, -16.0, 24.0, 32.0)
-        assert conf == pytest.approx(0.9)
-        # Zero offsets at the stride-8 anchor center (0, 0).
-        assert landmarks == ((0.0, 0.0),) * 5
-
-    def test_empty_when_all_below_threshold(self) -> None:
-        scores = np.array([[0.1], [0.2]], dtype=np.float32)
-        boxes = np.zeros((2, 4), dtype=np.float32)
-        kps = np.zeros((2, 10), dtype=np.float32)
-        score_out, box_out, kps_out, anchors = self._levels(scores, boxes, kps)
-
-        detections = decode_outputs(score_out, box_out, kps_out, anchors, threshold=0.5)
-        assert detections == []
-
-
-class TestMapDetectionsToFaces:
+class TestMapYunetFaces:
     def test_scales_back_and_clips(self) -> None:
-        detections = [(10.0, 20.0, 50.0, 80.0, 0.9, ((20.0, 30.0),))]
-        faces = map_detections_to_faces(detections, scale=0.5, image_size=(100, 100))
+        row = _yunet_row(10, 20, 50, 80, ((20, 30),) * 5, 0.9)
+        faces = map_yunet_faces(row, scale=0.5, image_size=(100, 100))
         assert faces == [
-            Face(bbox=(20, 40, 80, 60), confidence=0.9, landmarks=((40.0, 60.0),))
+            Face(
+                bbox=(20, 40, 80, 60),
+                confidence=pytest.approx(0.9),
+                landmarks=((40.0, 60.0),) * 5,
+            )
         ]
 
     def test_landmarks_keep_subpixel_precision(self) -> None:
-        detections = [(10.0, 20.0, 50.0, 80.0, 0.9, ((20.4, 30.6),))]
-        faces = map_detections_to_faces(detections, scale=0.5, image_size=(100, 100))
+        row = _yunet_row(10, 20, 50, 80, ((20.4, 30.6),) * 5, 0.9)
+        faces = map_yunet_faces(row, scale=0.5, image_size=(100, 100))
         x, y = faces[0].landmarks[0]
         assert x == pytest.approx(40.8)
         assert y == pytest.approx(61.2)
 
     def test_landmarks_clip_to_image(self) -> None:
-        detections = [(10.0, 20.0, 50.0, 80.0, 0.9, ((200.0, -5.0),))]
-        faces = map_detections_to_faces(detections, scale=1.0, image_size=(100, 80))
-        assert faces[0].landmarks == ((99.0, 0.0),)
+        row = _yunet_row(10, 20, 50, 80, ((200, -5),) * 5, 0.9)
+        faces = map_yunet_faces(row, scale=1.0, image_size=(100, 80))
+        assert faces[0].landmarks == ((99.0, 0.0),) * 5
 
     def test_drops_degenerate_boxes(self) -> None:
-        detections = [(-5.0, -5.0, -1.0, -1.0, 0.8, ())]
-        faces = map_detections_to_faces(detections, scale=1.0, image_size=(100, 100))
+        row = _yunet_row(-5, -5, -1, -1, (), 0.8)
+        faces = map_yunet_faces(row, scale=1.0, image_size=(100, 100))
         assert faces == []
+
+    def test_no_faces(self) -> None:
+        assert map_yunet_faces(None, scale=1.0, image_size=(100, 100)) == []

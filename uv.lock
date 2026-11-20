@@ -187,14 +187,18 @@ wheels = [
 
 [[package]]
 name = "blitzid"
-version = "0.3.6"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx2" },
+    { name = "langfuse" },
     { name = "numpy" },
     { name = "onnxruntime" },
     { name = "opencv-python-headless" },
     { name = "platformdirs" },
     { name = "pydantic" },
+    { name = "pydantic-ai" },
+    { name = "rapidocr" },
 ]
 
 [package.optional-dependencies]
@@ -202,14 +206,10 @@ all = [
     { name = "fakeredis" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "httpx2" },
-    { name = "langfuse" },
     { name = "mypy" },
     { name = "pre-commit" },
-    { name = "pydantic-ai" },
     { name = "pytest" },
     { name = "python-multipart" },
-    { name = "rapidocr" },
     { name = "redis" },
     { name = "ruff" },
     { name = "tqdm" },
@@ -239,12 +239,6 @@ dev = [
     { name = "tqdm" },
     { name = "types-tqdm" },
 ]
-ocr = [
-    { name = "httpx2" },
-    { name = "langfuse" },
-    { name = "pydantic-ai" },
-    { name = "rapidocr" },
-]
 scripts = [
     { name = "fakeredis" },
     { name = "tqdm" },
@@ -252,14 +246,14 @@ scripts = [
 
 [package.metadata]
 requires-dist = [
-    { name = "blitzid", extras = ["api", "barcode", "ocr", "scripts", "dev"], marker = "extra == 'all'" },
+    { name = "blitzid", extras = ["api", "barcode", "scripts", "dev"], marker = "extra == 'all'" },
     { name = "fakeredis", marker = "extra == 'dev'" },
     { name = "fakeredis", marker = "extra == 'scripts'" },
     { name = "fastapi", marker = "extra == 'api'" },
     { name = "fastapi", marker = "extra == 'dev'" },
     { name = "httpx", marker = "extra == 'dev'" },
-    { name = "httpx2", marker = "extra == 'ocr'" },
-    { name = "langfuse", marker = "extra == 'ocr'" },
+    { name = "httpx2" },
+    { name = "langfuse" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "onnxruntime" },
@@ -267,11 +261,11 @@ requires-dist = [
     { name = "platformdirs" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pydantic" },
-    { name = "pydantic-ai", marker = "extra == 'ocr'", specifier = ">=2.71" },
+    { name = "pydantic-ai", specifier = ">=2.71" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-multipart", marker = "extra == 'api'" },
     { name = "python-multipart", marker = "extra == 'dev'" },
-    { name = "rapidocr", marker = "extra == 'ocr'" },
+    { name = "rapidocr" },
     { name = "redis", marker = "extra == 'api'" },
     { name = "redis", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
@@ -281,7 +275,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'" },
     { name = "zxing-cpp", marker = "extra == 'barcode'" },
 ]
-provides-extras = ["ocr", "barcode", "api", "scripts", "dev", "all"]
+provides-extras = ["barcode", "api", "scripts", "dev", "all"]
 
 [[package]]
 name = "cachetools"

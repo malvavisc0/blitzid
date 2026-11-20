@@ -12,12 +12,12 @@ python scripts/download_models.py --models-dir /models
 
 ## Layout
 
-- `scrfd_2.5g.onnx` — SCRFD-2.5G face detector (InsightFace `buffalo_m`
-  detection weights); managed by
+- `face_detection_yunet_2026may.onnx` — YuNet face detector (OpenCV
+  Zoo, MIT, ~230 KB); managed by
   [`ModelManager`](../src/blitzid/_models.py).
-- `arcface_buffalo_m.onnx` — ArcFace face recognizer (InsightFace
-  `buffalo_m` recognition weights, ~174 MB, 512-d embeddings); managed
-  by `ModelManager` with the `filename`/`url`/`sha256` overrides.
+- `sface_2021dec.onnx` — SFace face recognizer (OpenCV Zoo, Apache 2.0,
+  ~39 MB, 128-d embeddings); managed by `ModelManager` with the
+  `filename`/`url`/`sha256` overrides.
 - `fairface.onnx` — FairFace attribute model (age group, gender, and
   race per face, ~85 MB); managed by `ModelManager` with the
   `filename`/`url`/`sha256` overrides.
@@ -25,18 +25,21 @@ python scripts/download_models.py --models-dir /models
   printed photo vs screen photo, ~1.7 MB); managed by `ModelManager`
   with the `filename`/`url`/`sha256` overrides.
 - `rapidocr/` — PP-OCR text detection, direction classification, and text
-  recognition models (the `ocr` extra); managed by RapidOCR's downloader,
+  recognition models (core dependency); managed by RapidOCR's downloader,
   redirected from its in-package default.
 
-Downloads are verified against pinned SHA-256 digests before being
-moved into place.
+The YuNet, SFace, FairFace, and MiniFASNet downloads are verified
+against pinned SHA-256 digests before being moved into place; RapidOCR
+uses its own downloader. Model weights are not covered by blitzid's MIT
+license; see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 ## Default location
 
 When unset, weights download on first use to the `platformdirs` user cache
 (`~/.cache/blitzid/models/` on Linux). Set `BLITZID_MODELS_DIR` to
-relocate all models (e.g. a Docker volume), or pass `model_dir=` to
-`FaceDetectorDNN` / `RapidOCRReader` for per-instance control.
+relocate all models (e.g. a Docker volume), or pass `model_dir=` to the
+detector, verifier, attribute/anti-spoof readers, or `RapidOCRReader`
+for per-instance control.
 
 ## Docker
 

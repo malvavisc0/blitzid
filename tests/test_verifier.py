@@ -1,4 +1,4 @@
-"""Tests for FaceVerifier and the ArcFace helpers.
+"""Tests for FaceVerifier and the SFace helpers.
 
 Validation and pure-helper tests are fast (no model load or network).
 Behavioural tests require the detector and recognition models to be
@@ -16,19 +16,17 @@ import numpy as np
 import pytest
 
 from blitzid.exceptions import BlitzIDError, FaceVerificationError, ModelError
-from blitzid.face._arcface import (
-    ARCFACE_EMBEDDING_DIM,
-    ARCFACE_INPUT_SIZE,
-    ARCFACE_MODEL_FILENAME,
+from blitzid.face._face import Face, VerificationResult
+from blitzid.face._sface import (
+    SFACE_EMBEDDING_DIM,
+    SFACE_INPUT_SIZE,
+    SFACE_MODEL_FILENAME,
     align_face,
     normalize_embedding,
     similarity_transform,
-    to_blob,
-    validate_architecture,
 )
-from blitzid.face._face import Face, VerificationResult
 from blitzid.face.detector import FaceDetectorDNN
-from blitzid.face.verifier import FaceVerifier
+from blitzid.face.verifier import DEFAULT_THRESHOLD, FaceVerifier
 
 _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "images"
 _SPECIMEN = _FIXTURE_DIR / "bub_der_personalausweis_kopie.jpg"
@@ -55,6 +53,9 @@ class TestParameterValidation:
     def test_boundary_thresholds_valid(self) -> None:
         FaceVerifier._validate_threshold(-1.0)
         FaceVerifier._validate_threshold(1.0)
+
+    def test_default_threshold_matches_sface(self) -> None:
+        assert DEFAULT_THRESHOLD == 0.363
 
 
 class TestSimilarityTransform:
@@ -89,20 +90,12 @@ class TestAlignFace:
     def test_output_is_template_sized(self) -> None:
         img = np.zeros((200, 200, 3), dtype=np.uint8)
         aligned = align_face(img, _LANDMARKS)
-        assert aligned.shape == (ARCFACE_INPUT_SIZE, ARCFACE_INPUT_SIZE, 3)
+        assert aligned.shape == (SFACE_INPUT_SIZE, SFACE_INPUT_SIZE, 3)
 
     def test_wrong_landmark_count_raises(self) -> None:
         img = np.zeros((200, 200, 3), dtype=np.uint8)
         with pytest.raises(ValueError, match="landmarks"):
             align_face(img, _LANDMARKS[:4])
-
-
-class TestToBlob:
-    def test_shape_and_normalization(self) -> None:
-        img = np.full((112, 112, 3), 255, dtype=np.uint8)
-        blob = to_blob(img)
-        assert blob.shape == (1, 3, ARCFACE_INPUT_SIZE, ARCFACE_INPUT_SIZE)
-        assert np.allclose(blob, 1.0)
 
 
 class TestNormalizeEmbedding:
@@ -116,23 +109,6 @@ class TestNormalizeEmbedding:
     def test_zero_vector_raises(self) -> None:
         with pytest.raises(ModelError, match="zero-norm"):
             normalize_embedding(np.zeros((1, 4), dtype=np.float32))
-
-
-class TestValidateRecognitionArchitecture:
-    def test_valid_layout(self) -> None:
-        validate_architecture([None, 3, 112, 112], [1, ARCFACE_EMBEDDING_DIM])
-
-    def test_wrong_input_shape_raises(self) -> None:
-        with pytest.raises(ModelError, match="input shape"):
-            validate_architecture([None, 3, 224, 224], [1, ARCFACE_EMBEDDING_DIM])
-
-    def test_wrong_output_dim_raises(self) -> None:
-        with pytest.raises(ModelError, match="output shape"):
-            validate_architecture([None, 3, 112, 112], [1, 256])
-
-    def test_none_shape_raises(self) -> None:
-        with pytest.raises(ModelError, match="layout"):
-            validate_architecture(None, None)
 
 
 class TestSimilarity:
@@ -150,7 +126,7 @@ class TestSimilarity:
         assert FaceVerifier.similarity(vec, -vec) == pytest.approx(-1.0)
 
     def test_shape_mismatch_raises(self) -> None:
-        a = np.zeros(512, dtype=np.float32)
+        a = np.zeros(SFACE_EMBEDDING_DIM, dtype=np.float32)
         b = np.zeros(256, dtype=np.float32)
         with pytest.raises(FaceVerificationError, match="shape mismatch"):
             FaceVerifier.similarity(a, b)
@@ -178,7 +154,7 @@ def _assert_valid_result(result: VerificationResult, threshold: float) -> None:
     assert -1.0 <= result.similarity <= 1.0
     assert result.threshold == threshold
     assert result.processing_time >= 0
-    assert result.backend == "ONNXRuntime"
+    assert result.backend == "OpenCV DNN (SFace)"
     assert result.verified == (result.similarity >= result.threshold)
 
 
@@ -187,7 +163,7 @@ class TestEmbed:
         self, verifier: FaceVerifier, specimen_image: np.ndarray
     ) -> None:
         emb = verifier.embed(specimen_image)
-        assert emb.shape == (ARCFACE_EMBEDDING_DIM,)
+        assert emb.shape == (SFACE_EMBEDDING_DIM,)
         assert emb.dtype == np.float32
         assert np.isclose(np.linalg.norm(emb), 1.0)
 
@@ -283,7 +259,7 @@ class TestModelDirResolution:
         shutil.copy(verifier.detector.model_manager.model_path, tmp_path)
         with pytest.raises(
             ModelError,
-            match=re.escape(str(tmp_path / ARCFACE_MODEL_FILENAME)),
+            match=re.escape(str(tmp_path / SFACE_MODEL_FILENAME)),
         ):
             FaceVerifier(allow_downloads=False)
 
@@ -292,11 +268,11 @@ class TestModelDirResolution:
         tmp_path: Path,
         verifier: FaceVerifier,
     ) -> None:
-        """ArcFace weights are looked up next to a supplied detector's."""
+        """SFace weights are looked up next to a supplied detector's."""
         shutil.copy(verifier.detector.model_manager.model_path, tmp_path)
         detector = FaceDetectorDNN(model_dir=tmp_path, allow_downloads=False)
         with pytest.raises(
             ModelError,
-            match=re.escape(str(tmp_path / ARCFACE_MODEL_FILENAME)),
+            match=re.escape(str(tmp_path / SFACE_MODEL_FILENAME)),
         ):
             FaceVerifier(detector=detector, allow_downloads=False)

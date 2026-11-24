@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | BlitzID{% endblock %}
+{% block description %}Your BlitzID usage, API keys, and plan.{% endblock %}
+{% block canonical %}https://blitzid.io/dashboard{% endblock %}
+{% block meta %}    <meta name="robots" content="noindex" />
+{% endblock %}
+{% block social %}{% endblock %}
+
+{% block body_class %}app-page{% endblock %}
+
+{% macro billing_button(quiet=false) %}
+<form method="post" action="/billing/portal">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <button class="button {{ 'button--ghost' if quiet else 'button--secondary' }}" type="submit">Manage billing</button>
+</form>
+{% endmacro %}
+
+{% block body %}
+
+    <main id="main" class="app-main">
+      <div class="container">
+        <div class="app-heading">
+          <p class="app-kicker">Dashboard</p>
+          <h1>{{ org.name }}</h1>
+        </div>
+
+        {% if error_message %}
+        <div class="app-alert app-alert--error" role="alert">{{ error_message }}</div>
+        {% endif %}
+        {% if notice %}
+        <div class="app-alert{% if notice_tone %} app-alert--{{ notice_tone }}{% endif %}" role="status">{{ notice }}</div>
+        {% endif %}
+
+        {% if not can_checkout %}
+        <div class="app-overview{% if entitled %} app-overview--split{% endif %}">
+          {% if entitled %}
+          <section class="app-panel" aria-labelledby="usage-title">
+            <div class="app-panel__head">
+              <h2 id="usage-title">Usage this month</h2>
+              <span class="app-meta">Resets on the 1st (UTC)</span>
+            </div>
+            <p class="app-metric">
+              <strong>{{ "{:,}".format(used) }}</strong>
+              {% if quota %}of {{ "{:,}".format(quota) }} requests{% else %}requests (no limit){% endif %}
+            </p>
+            {% if quota %}
+            {% set quota_reached = used >= quota %}
+            <div class="usage-progress{% if quota_reached %} usage-progress--warning{% endif %}" role="meter" aria-valuenow="{{ [used, quota] | min }}" aria-valuemin="0" aria-valuemax="{{ quota }}" aria-label="Monthly quota used" aria-valuetext="{{ used }} of {{ quota }} requests used">
+              <span class="usage-progress__fill" style="width: {{ percent }}%"></span>
+            </div>
+            <p class="app-note{% if quota_reached %} app-note--warning{% endif %}">
+              {% if quota_reached %}Monthly quota reached.{% else %}{{ "{:,}".format(quota - used) }} requests remaining{% endif %}
+            </p>
+            {% endif %}
+            {% if used %}
+            <svg class="usage-chart" viewBox="0 0 {{ usage_series | length }} 40" preserveAspectRatio="none" role="img" aria-label="Daily requests this month">
+              {% set peak = usage_series | max %}
+              {% for count in usage_series %}
+              <rect class="bar" x="{{ loop.index0 + 0.15 }}" y="{{ 40 - (count * 40 / peak) }}" width="0.7" height="{{ count * 40 / peak }}"><title>Day {{ loop.index }}: {{ count }} requests</title></rect>
+              {% endfor %}
+              <line class="base" x1="0" y1="39.5" x2="{{ usage_series | length }}" y2="39.5"></line>
+            </svg>
+            {% endif %}
+          </section>
+          {% endif %}
+
+          <section class="app-panel plan-summary" aria-labelledby="current-plan">
+            <div class="app-panel__head">
+              <h2 id="current-plan" tabindex="-1">Current plan</h2>
+              {% if cancel_at %}
+              <span class="status status--warning">{{ "Ended" if cancellation_ended else "Ending" }}</span>
+              {% else %}
+              <span class="status{% if subscription_active %} status--on{% elif org.subscription_status == 'past_due' %} status--warning{% endif %}">{{ org.subscription_status | replace("_", " ") }}</span>
+              {% endif %}
+            </div>
+            <p class="app-metric">
+              <strong>{{ org.plan | capitalize if limits else "No plan" }}</strong>
+              {% if limits and limits.monthly_price_usd %}${{ limits.monthly_price_usd }} / month{% endif %}
+            </p>
+            {% if cancel_at %}
+            <p class="app-note app-note--warning">
+              Plan {{ "ended" if cancellation_ended else "ends" }} <time datetime="{{ cancel_at.isoformat() }}">{{ cancel_at.strftime("%b %d, %Y at %H:%M UTC") }}</time>.
+              {% if cancellation_ended %}API access has stopped.
+              {% elif subscription_active %}Your plan won't renew.{% endif %}
+            </p>
+            {% endif %}
+            {% if org.subscription_status == "past_due" and can_manage_billing and not cancellation_ended %}
+            <p class="app-note">Update your payment method{% if not entitled %} to restore API access{% endif %}.</p>
+            {% elif not entitled and not cancel_at %}
+            <p class="app-note">
+              <a href="mailto:hello@blitzid.io">Contact support</a> to restore API access.
+            </p>
+            {% elif local_billing %}
+            <p class="app-note">Local preview. No payment is taken.</p>
+            {% elif period_end and not cancel_at %}
+            <p class="app-note">Billing period ends <time datetime="{{ period_end.date().isoformat() }}">{{ period_end.strftime("%b %d, %Y") }}</time></p>
+            {% endif %}
+            {% if confirming_preview_cancellation %}
+            <div id="cancel-plan" tabindex="-1">
+              <p class="app-note">This ends your preview plan immediately. Your account and keys won't be deleted.</p>
+              <div class="row-actions preview-cancellation__actions">
+                <form method="post" action="/billing/cancel">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                  <button class="button button--danger" type="submit" name="confirm_preview" value="true">Cancel preview plan</button>
+                </form>
+                <a class="button button--ghost" href="/dashboard#current-plan">Keep plan</a>
+              </div>
+            </div>
+            {% elif can_switch_plan or can_manage_billing or can_cancel_plan or org.plan == "enterprise" %}
+            <div class="row-actions app-panel__actions">
+              {% if can_switch_plan %}
+              <a class="button button--secondary" href="{% if not comparing_plans %}/dashboard?plans=1{% endif %}#plan-options">Change plan</a>
+              {% endif %}
+              {% if can_manage_billing %}
+              {{ billing_button(quiet=can_switch_plan) }}
+              {% elif org.plan == "enterprise" %}
+              <a class="button button--secondary" href="mailto:sales@blitzid.io?subject=BlitzID%20Enterprise">Contact sales</a>
+              {% endif %}
+              {% if can_cancel_plan %}
+                {% if local_billing %}
+                <a class="button button--danger" href="/dashboard?cancel=1#cancel-plan">Cancel plan</a>
+                {% else %}
+                <form method="post" action="/billing/cancel">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                  <button class="button button--danger" type="submit">Cancel plan</button>
+                </form>
+                {% endif %}
+              {% endif %}
+            </div>
+            {% endif %}
+          </section>
+        </div>
+        {% endif %}
+
+        {% if comparing_plans or (can_checkout and not awaiting_checkout) %}
+        <section class="plan-options" id="plan-options" aria-labelledby="plans-title" tabindex="-1">
+          <div class="app-panel__head">
+            <div>
+              <h2 id="plans-title">{{ "Compare plans" if comparing_plans else "Choose a plan" }}</h2>
+              <p class="app-note">
+                {% if org.subscription_status == "canceled" and can_manage_billing %}Your previous plan has ended. Choose a plan to restore API access.
+                {% elif local_billing %}Local preview. No payment is taken.
+                {% elif comparing_plans %}Stripe shows any price adjustment before you confirm.
+                {% else %}Choose a monthly plan to get API access. Cancel anytime in Stripe.{% endif %}
+              </p>
+            </div>
+            {% if comparing_plans %}
+            <a class="app-meta" href="/dashboard#current-plan">Hide plans</a>
+            {% elif can_manage_billing %}
+            {{ billing_button(quiet=true) }}
+            {% endif %}
+          </div>
+          <div class="plan-grid">
+            {% for id, plan in plans.items() %}
+            {% set is_current = comparing_plans and id == org.plan %}
+            <article class="plan-card{% if is_current %} plan-card--current{% elif id == 'pro' %} plan-card--pro{% endif %}" aria-labelledby="plan-{{ id }}">
+              <div class="plan-card__head">
+                <h3 id="plan-{{ id }}">{{ id | capitalize }}</h3>
+                {% if is_current %}<span class="status status--on">Current plan</span>{% endif %}
+              </div>
+              <p class="app-metric"><strong>${{ plan.monthly_price_usd }}</strong> / month</p>
+              <ul>
+                <li>{{ "{:,}".format(plan.request_quota) }} requests / month</li>
+                <li>{{ plan.requests_per_minute }} requests / minute</li>
+                <li>{{ plan.max_keys }} active API {{ "key" if plan.max_keys == 1 else "keys" }}</li>
+              </ul>
+              {% if not is_current %}
+              <form method="post" action="{{ '/billing/change-plan' if comparing_plans else '/billing/checkout' }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                <input type="hidden" name="plan" value="{{ id }}" />
+                <button class="button {{ 'button--primary' if comparing_plans or id == 'pro' else 'button--secondary' }}" type="submit">{{ "Switch to" if comparing_plans else "Choose" }} {{ id | capitalize }}</button>
+              </form>
+              {% endif %}
+            </article>
+            {% endfor %}
+          </div>
+          {% if comparing_plans and org.plan == "pro" %}
+          <p class="app-note">Your usage this month and existing keys carry over. Starter has lower limits.</p>
+          {% elif not comparing_plans %}
+          <p class="app-note">Need Enterprise? <a href="mailto:sales@blitzid.io?subject=BlitzID%20Enterprise">Contact sales</a>.</p>
+          {% endif %}
+        </section>
+        {% endif %}
+
+        {% if entitled %}
+        {% set max_keys = limits.max_keys %}
+        {% set at_key_limit = max_keys is not none and active_keys >= max_keys %}
+        <section class="app-panel" aria-labelledby="keys-title">
+          <div class="app-panel__head">
+            <h2 id="keys-title">API keys</h2>
+            <div class="app-meta row-actions">
+              <span>{{ active_keys }}{% if max_keys is not none %} of {{ max_keys }}{% endif %} active</span>
+              <a href="/docs">API docs</a>
+            </div>
+          </div>
+
+          {% if not at_key_limit %}
+          <form class="key-create" method="post" action="/dashboard/keys">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <label class="app-label" for="key-name">New key name</label>
+            <div class="key-create__row">
+              <input class="app-input" id="key-name" name="name" maxlength="100" placeholder="e.g. Production" autocomplete="off" />
+              <button class="button button--primary" type="submit">Create key</button>
+            </div>
+          </form>
+          {% endif %}
+
+          {% if keys %}
+          <div class="table-wrap">
+            <table class="app-table">
+              <thead>
+                <tr>
+                  <th scope="col">Name</th>
+                  <th scope="col">Prefix</th>
+                  <th scope="col">Created</th>
+                  <th scope="col">Last used</th>
+                  <th scope="col">Status</th>
+                  <th scope="col"><span class="visually-hidden">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in keys %}
+                <tr{% if not row.active %} class="app-table__row--inactive"{% endif %}>
+                  <td>{{ row.key.name }}</td>
+                  <td><code>blz_live_{{ row.key.prefix }}…</code></td>
+                  <td><code>{{ row.key.created_at.strftime("%Y-%m-%d") }}</code></td>
+                  <td><code>{{ row.last_used.strftime("%Y-%m-%d %H:%M") if row.last_used else "—" }}</code></td>
+                  <td><span class="status{% if row.status == 'Rotating' %} status--warning{% elif row.active %} status--on{% endif %}">{{ row.status }}</span></td>
+                  <td>
+                    {% if row.active %}
+                    <div class="row-actions">
+                      {% if max_keys is none or active_keys <= max_keys %}
+                      <form method="post" action="/dashboard/keys/{{ row.key.id }}/rotate">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                        <button class="button button--secondary button--small" type="submit">Rotate</button>
+                      </form>
+                      {% endif %}
+                      <form method="post" action="/dashboard/keys/{{ row.key.id }}/revoke">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                        <button class="button button--danger button--small" type="submit">Revoke</button>
+                      </form>
+                    </div>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="empty-state">No keys yet. Create one above.</p>
+          {% endif %}
+          {% if at_key_limit %}
+          <p class="app-note">
+            {% if active_keys > max_keys %}You're over your plan's key limit. Revoke extra keys or let rotating keys expire before adding more.
+            {% else %}All key slots are in use. Rotate a key to replace it or revoke one to free a slot.{% endif %}
+          </p>
+          {% endif %}
+        </section>
+        {% endif %}
+      </div>
+    </main>
+{% endblock %}

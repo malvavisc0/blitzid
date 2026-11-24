@@ -32,6 +32,20 @@ Measurement," WACV 2021. The model weights are distributed under CC BY
 - [NumPy](https://numpy.org) — BSD-3-Clause
 - [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) — Apache-2.0
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) — Apache-2.0
+- [pypdfium2](https://github.com/pypdfium2/pypdfium2) (PDFium) — BSD-3-Clause
+- [psycopg](https://github.com/psycopg/psycopg) (libpq) — LGPL-3.0-only
+- [psycopg-pool](https://github.com/psycopg/psycopg-pool) — LGPL-3.0-only
 
 Python dependencies installed from PyPI carry their own metadata and
 licenses; `pip`/`uv` package metadata is the source of truth for those.
+
+## Website assets
+
+- [JetBrains Mono](https://www.jetbrains.com/lp/mono/) — the bundled
+  `web/app/static/fonts/jetbrains-mono-latin.woff2` is redistributed under
+  the SIL Open Font License 1.1; the full text is in
+  [LICENSES/OFL-1.1.txt](LICENSES/OFL-1.1.txt).
+- [Scalar API Reference](https://github.com/scalar/scalar) — the pinned
+  standalone bundle is downloaded at image build time and served locally
+  under the MIT license; the full text is in
+  [LICENSES/Scalar-MIT.txt](LICENSES/Scalar-MIT.txt).

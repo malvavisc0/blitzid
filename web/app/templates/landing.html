@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+
+{% block title %}ID Document Extraction API | BlitzID{% endblock %}
+{% block description %}Extract names, document numbers, and expiry dates from passports, ID cards, and driver's licenses as JSON. Use the hosted API or self-host.{% endblock %}
+
+{% block body_class %}landing-page{% endblock %}
+
+{% block body %}
+
+    <main id="main">
+      <section class="hero">
+        <div class="container hero__grid">
+          <div class="hero__copy">
+            <h1>
+              We read the ID.
+              <span>You keep the rules.</span>
+            </h1>
+            <p class="lead">
+              Get names, document numbers, and expiry dates from passports,
+              ID cards, and driver's licenses. Apply your own rules for what
+              to accept or send for review.
+            </p>
+            <div class="actions">
+              <a class="button button--primary button--lg" href="{{ '/dashboard' if signed_in else '/login' }}">{{ "Open dashboard" if signed_in else "Get an API key" }}</a>
+              <a class="button button--on-dark button--lg" href="/docs">Read the docs</a>
+            </div>
+            <p class="proof-line">
+              <a href="#pricing">Hosted plans from ${{ plans.starter.monthly_price_usd }}/month</a>
+              <a href="#data-handling">Data handling</a>
+            </p>
+          </div>
+
+          <div class="demo">
+            <div class="demo__bar">
+              <div class="demo__tabs" role="tablist" aria-label="Response or request" data-tabs>
+                <button type="button" role="tab" id="tab-result" aria-controls="panel-result" aria-selected="true">Result</button>
+                <button type="button" role="tab" id="tab-request" aria-controls="panel-request" aria-selected="false" tabindex="-1">Request</button>
+              </div>
+              <span class="demo__label">td3_passport_specimen.jpg</span>
+            </div>
+
+            <div class="demo__panels">
+              <div class="demo__result" id="panel-result" role="tabpanel" aria-labelledby="tab-result">
+                <div class="demo__doc">
+                  <img src="/static/passport-specimen.webp" width="615" height="418" alt="ICAO specimen passport for Anna Maria Eriksson, document number L898902C3" />
+                  <svg class="demo__hit" viewBox="0 0 615 418" aria-hidden="true">
+                    <path d="M22 363V356H39 M119 356H136V363 M136 372V379H119 M39 379H22V372" vector-effect="non-scaling-stroke" />
+                  </svg>
+                </div>
+                <div class="demo__json">
+                  <p>mrz.record</p>
+                  <pre class="demo__out">{
+  <span class="tok-key">"document_number"</span>: <span class="demo__match">"L898902C3"</span>,
+  <span class="tok-key">"expiry_date"</span>: <span class="tok-str">"120415"</span>,
+  <span class="tok-key">"surname"</span>: <span class="tok-str">"ERIKSSON"</span>,
+  <span class="tok-key">"given_names"</span>: <span class="tok-str">"ANNA MARIA"</span>
+}</pre>
+                </div>
+              </div>
+
+              <div class="demo__request" id="panel-request" role="tabpanel" aria-labelledby="tab-request" hidden>
+                <div class="demo__request-bar">
+                  <span>POST /api/analyze</span>
+                  <div class="demo__langs" role="tablist" aria-label="Language" data-tabs>
+                    <button type="button" role="tab" id="tab-curl" aria-controls="panel-curl" aria-selected="true">curl</button>
+                    <button type="button" role="tab" id="tab-python" aria-controls="panel-python" aria-selected="false" tabindex="-1">python</button>
+                    <button type="button" role="tab" id="tab-js" aria-controls="panel-js" aria-selected="false" tabindex="-1">js</button>
+                  </div>
+                </div>
+                <pre class="code-block" id="panel-curl" role="tabpanel" aria-labelledby="tab-curl"><span class="tok-cmd">curl</span> https://api.blitzid.io/api/analyze \
+  -H <span class="tok-str">"Authorization: Bearer $BLITZID_API_KEY"</span> \
+  -F <span class="tok-str">image=@td3_passport_specimen.jpg</span> \
+  -F <span class="tok-str">types=mrz</span></pre>
+                <pre class="code-block" id="panel-python" role="tabpanel" aria-labelledby="tab-python" hidden><span class="tok-key">import</span> requests
+
+response = requests.post(
+    <span class="tok-str">"https://api.blitzid.io/api/analyze"</span>,
+    headers={<span class="tok-str">"Authorization"</span>: <span class="tok-str">f"Bearer {api_key}"</span>},
+    files={<span class="tok-str">"image"</span>: open(<span class="tok-str">"td3_passport_specimen.jpg"</span>, <span class="tok-str">"rb"</span>)},
+    data={<span class="tok-str">"types"</span>: <span class="tok-str">"mrz"</span>},
+)</pre>
+                <pre class="code-block" id="panel-js" role="tabpanel" aria-labelledby="tab-js" hidden><span class="tok-key">const</span> body = <span class="tok-key">new</span> FormData();
+body.append(<span class="tok-str">"image"</span>, <span class="tok-cmd">await</span> openAsBlob(<span class="tok-str">"td3_passport_specimen.jpg"</span>));
+body.append(<span class="tok-str">"types"</span>, <span class="tok-str">"mrz"</span>);
+
+<span class="tok-key">const</span> response = <span class="tok-cmd">await</span> fetch(<span class="tok-str">"https://api.blitzid.io/api/analyze"</span>, {
+  method: <span class="tok-str">"POST"</span>,
+  headers: { Authorization: <span class="tok-str">`Bearer ${api_key}`</span> },
+  body,
+});</pre>
+                <p class="demo__caption">Returns 202 with a status_url to poll. <a href="https://raw.githubusercontent.com/malvavisc0/blitzid/HEAD/images/td3_passport_specimen.jpg">Get the specimen</a></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="outputs" aria-labelledby="outputs-title">
+        <div class="container">
+          <div class="section-head">
+            <h2 id="outputs-title">What one upload gives you</h2>
+            <p>
+              Each analysis returns its own section of the job result. Take
+              what you need, ignore the rest.
+            </p>
+          </div>
+
+          <div class="ledger">
+            <article class="ledger__row">
+              <div class="ledger__doc">
+                <h3>Text, MRZ &amp; barcodes</h3>
+                <p>
+                  Printed text with confidence scores, TD1/TD2/TD3 machine
+                  readable zones parsed field by field, and PDF417 barcodes
+                  decoded from US and Canadian licenses.
+                </p>
+                <ul class="ledger__types">
+                  <li>ocr</li>
+                  <li>mrz</li>
+                  <li>barcode</li>
+                </ul>
+              </div>
+              <pre class="ledger__fields"><span class="k">"mrz"</span>: {
+  <span class="k">"record"</span>: {
+    <span class="k">"document_number"</span>: <span class="n">"L898902C3"</span>,
+    <span class="k">"expiry_date"</span>: <span class="s">"120415"</span>,
+    <span class="k">"surname"</span>: <span class="s">"ERIKSSON"</span>,
+    <span class="k">"check_digits"</span>: { <span class="s">"document_number"</span>: <span class="s">"valid"</span> }
+  }
+}</pre>
+            </article>
+
+            <article class="ledger__row">
+              <div class="ledger__doc">
+                <h3>Face signals</h3>
+                <p>
+                  Portrait crops, a 1:1 score between an ID photo and a
+                  selfie, and anti-spoof scores. Liveness is a separate
+                  challenge flow with three frames of its own.
+                </p>
+                <ul class="ledger__types">
+                  <li>face</li>
+                  <li>antispoof</li>
+                  <li>verify</li>
+                </ul>
+              </div>
+              <pre class="ledger__fields"><span class="k">"face"</span>: {
+  <span class="k">"bbox"</span>: [<span class="n">143</span>, <span class="n">132</span>, <span class="n">164</span>, <span class="n">198</span>],
+  <span class="k">"quality"</span>: <span class="n">0.91</span>,
+  <span class="k">"spoof"</span>: { <span class="k">"score"</span>: <span class="n">0.03</span>, <span class="k">"label"</span>: <span class="s">"live"</span> }
+}</pre>
+            </article>
+
+            <article class="ledger__row">
+              <div class="ledger__doc">
+                <h3>Structured extraction</h3>
+                <p>
+                  Printed text becomes named fields, then a consistency pass
+                  compares those fields with the MRZ so mismatches surface as
+                  data, not as guesses.
+                </p>
+                <ul class="ledger__types">
+                  <li>structured</li>
+                  <li>consistency</li>
+                </ul>
+              </div>
+              <pre class="ledger__fields"><span class="k">"consistency"</span>: {
+  <span class="k">"checks"</span>: [
+    { <span class="k">"field"</span>: <span class="s">"document_number"</span>, <span class="k">"status"</span>: <span class="s">"match"</span> },
+    { <span class="k">"field"</span>: <span class="s">"date_of_birth"</span>, <span class="k">"status"</span>: <span class="s">"match"</span> }
+  ]
+}</pre>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section--soft" id="developers" aria-labelledby="developers-title">
+        <div class="container">
+          <div class="section-head">
+            <h2 id="developers-title">Three calls</h2>
+            <p>
+              Submit one image or PDF, poll from your backend, save the first
+              finished response. No SDK required.
+            </p>
+          </div>
+
+          <div class="developer">
+            <div class="developer__copy">
+              <ol class="quickstart">
+                <li>
+                  <h3>Send one document image</h3>
+                  <p>
+                    In a multipart POST <code class="inline-code">/api/analyze</code>,
+                    send the file as <code class="inline-code">image</code> and list
+                    the analyses in <code class="inline-code">types</code>, for example
+                    <code class="inline-code">ocr,barcode</code>.
+                  </p>
+                </li>
+                <li>
+                  <h3>Poll from your backend</h3>
+                  <p>
+                    Take the <code class="inline-code">status_url</code> from the
+                    <code class="inline-code">202 Accepted</code> response. Poll it with
+                    GET, spacing out requests while the job is
+                    <code class="inline-code">queued</code> or
+                    <code class="inline-code">running</code>.
+                  </p>
+                </li>
+                <li>
+                  <h3>Save the first completed response</h3>
+                  <p>
+                    Use one poller per job. The first read of
+                    <code class="inline-code">done</code> or
+                    <code class="inline-code">failed</code> consumes the result. Check
+                    each section for an <code class="inline-code">error</code>, even
+                    when the job says done.
+                  </p>
+                </li>
+              </ol>
+
+              <div class="lifecycle">
+                <p class="lifecycle__label">Job lifecycle</p>
+                <ol class="timeline" aria-label="Job lifecycle">
+                  <li class="timeline__step">
+                    <span class="timeline__code">202</span>
+                    <span class="timeline__name">Accepted</span>
+                    <span class="timeline__detail">returns the status URL</span>
+                  </li>
+                  <li class="timeline__step">
+                    <span class="timeline__code">200</span>
+                    <span class="timeline__name">Queued, then running</span>
+                    <span class="timeline__detail">keep polling with GET</span>
+                  </li>
+                  <li class="timeline__step">
+                    <span class="timeline__code">200</span>
+                    <span class="timeline__name">Done</span>
+                    <span class="timeline__detail">the first read claims the result</span>
+                  </li>
+                </ol>
+              </div>
+            </div>
+
+            <div class="code-card">
+              <div class="code-card__bar">
+                <span class="code-card__title">GET /api/jobs/{id}</span>
+                <span class="code-card__meta">200 OK</span>
+                <button class="copy-button" type="button" data-copy="quickstart-response" hidden>Copy JSON</button>
+              </div>
+              <pre class="code-block code-block--lg" id="quickstart-response">{
+  <span class="tok-key">"status"</span>: <span class="tok-str">"done"</span>,
+  <span class="tok-key">"ocr"</span>: {
+    <span class="tok-key">"lines"</span>: [{
+      <span class="tok-key">"text"</span>: <span class="tok-str">"L898902C3"</span>,
+      <span class="tok-key">"bbox"</span>: [488, 82, 79, 16],
+      <span class="tok-key">"confidence"</span>: 0.99995
+    }],
+    <span class="tok-key">"processing_time_ms"</span>: 865.4
+  },
+  <span class="tok-key">"barcode"</span>: {
+    <span class="tok-key">"error"</span>: <span class="tok-err">"no PDF417 barcode found in the image"</span>,
+    <span class="tok-key">"processing_time_ms"</span>: 8.6
+  }
+}</pre>
+              <p class="code-card__foot">
+                Specimen response excerpt. No barcode was found; the OCR
+                result still came back.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="data-handling" aria-labelledby="security-title">
+        <div class="container">
+          <div class="section-head">
+            <h2 id="security-title">How we handle ID data</h2>
+            <p>
+              Where analysis runs and what the default self-hosted Docker
+              setup keeps while handling an upload.
+            </p>
+          </div>
+
+          <div class="security">
+            <div>
+              <ul class="claim-list">
+                <li>
+                  <strong>Built-in analyses</strong>
+                  <p>
+                    When you self-host, OCR, MRZ, barcode, and face analysis
+                    run on your own CPU. No GPU or external inference service
+                    required.
+                  </p>
+                </li>
+                <li>
+                  <strong>Structured extraction</strong>
+                  <p>
+                    The model receives OCR text, not images. BlitzID manages
+                    the model for the hosted API. If you self-host, you choose
+                    the model endpoint.
+                  </p>
+                </li>
+                <li>
+                  <strong>Hosted API</strong>
+                  <p>
+                    <a href="mailto:hello@blitzid.io?subject=BlitzID%20data%20handling">Contact us</a>
+                    about data residency and retention before sending
+                    production IDs.
+                  </p>
+                </li>
+              </ul>
+              <a class="text-link" href="https://github.com/malvavisc0/blitzid/blob/HEAD/docs/integration.md#data-and-privacy">Self-hosted data handling &rarr;</a>
+            </div>
+
+            <section class="retention-panel" aria-labelledby="retention-title">
+              <h3 id="retention-title">Self-hosted job lifecycle</h3>
+              <ol class="retention">
+                <li>
+                  <h4>Queue in memory</h4>
+                  <p>Redis holds the queued job with persistence turned off by default.</p>
+                </li>
+                <li>
+                  <h4>Process and discard the upload</h4>
+                  <p>When the job finishes, Redis removes the upload and keeps only the result.</p>
+                </li>
+                <li>
+                  <h4>Read the result once</h4>
+                  <p>The first fetch removes the result. If unread, it expires after 15 minutes by default.</p>
+                </li>
+              </ol>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section--soft" id="pricing" aria-labelledby="pricing-title">
+        <div class="container">
+          <div class="section-head">
+            <h2 id="pricing-title">Hosted plans</h2>
+            <p>
+              In preview. Paid monthly, no free tier or trial — cancel
+              anytime in the Stripe portal.
+            </p>
+          </div>
+
+          <div class="pricing-grid">
+            {% for plan_id, plan in plans.items() %}
+            <article class="price-card{% if plan_id == 'pro' %} price-card--pro{% endif %}">
+              <p class="price-card__tier">{{ plan_id | capitalize }}</p>
+              <p class="price">${{ plan.monthly_price_usd }} <span>/ month</span></p>
+              <ul class="price-card__features">
+                <li>{{ "{:,}".format(plan.request_quota) }} requests / month</li>
+                <li>{{ plan.requests_per_minute }} requests / minute</li>
+                <li>{{ "Priority email support" if plan_id == "pro" else "Email support" }}</li>
+              </ul>
+              <a class="button button--{{ 'primary' if plan_id == 'pro' else 'secondary' }} button--block" href="{{ '/dashboard?plans=1#plan-options' if signed_in else '/login' }}">{{ "View plans" if signed_in else "Choose " ~ (plan_id | capitalize) }}</a>
+            </article>
+            {% endfor %}
+
+            <article class="price-card price-card--enterprise">
+              <p class="price-card__tier">Enterprise</p>
+              <p class="price price--custom">Custom</p>
+              <ul class="price-card__features">
+                <li>Self-host or VPC deployment</li>
+                <li>SSO/SAML and access controls</li>
+                <li>SLA and dedicated support</li>
+                <li>Unlimited volume and quotas</li>
+              </ul>
+              <a class="button button--on-dark button--block" href="mailto:sales@blitzid.io?subject=BlitzID%20Enterprise">Contact sales</a>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="section" aria-labelledby="faq-title">
+        <div class="container">
+          <div class="faq">
+            <div class="faq__head">
+              <h2 id="faq-title">Questions engineers ask</h2>
+              <p>
+                The short answers. The reference has the rest.
+              </p>
+            </div>
+
+            <div class="faq__list">
+              <details>
+                <summary>Which documents are supported?</summary>
+                <p>
+                  Passports, national ID cards, and driver's licenses, including
+                  US and Canadian licenses with PDF417 barcodes. The OCR pass is
+                  not limited to a document list: if text can be read and an MRZ
+                  or barcode is present, fields can be extracted.
+                </p>
+              </details>
+              <details>
+                <summary>Can I try it before paying?</summary>
+                <p>
+                  There's no free hosted plan, but you can
+                  <a href="https://github.com/malvavisc0/blitzid/blob/HEAD/docs/integration.md#run-the-stack">run the open-source API locally</a>
+                  without an account. The self-hosted API has no built-in auth;
+                  put it behind your own auth proxy if you expose it.
+                </p>
+              </details>
+              <details>
+                <summary>Does a valid MRZ prove the ID is genuine?</summary>
+                <p>
+                  No. A valid MRZ or barcode proves the document is readable and
+                  internally consistent. Genuine-document checks need policies,
+                  issuing authority data, or vendor-specific security features.
+                  BlitzID gives you signals; your code makes the decision.
+                </p>
+              </details>
+              <details>
+                <summary>How long does analysis take?</summary>
+                <p>
+                  OCR and MRZ each took about one second per specimen image in a
+                  <a href="https://github.com/malvavisc0/blitzid#performance">warm laptop CPU benchmark</a>.
+                  Hosted latency also depends on upload time, queue time, and
+                  the analyses you request.
+                </p>
+              </details>
+              <details>
+                <summary>What errors should I retry?</summary>
+                <p>
+                  Retry <code class="inline-code">503</code> after the
+                  <code class="inline-code">Retry-After</code> delay; the queue is
+                  full or briefly unavailable. Don't retry
+                  <code class="inline-code">410</code>: that result was already
+                  read or has expired. See the
+                  <a href="https://github.com/malvavisc0/blitzid/blob/HEAD/docs/integration.md#when-things-fail">error handling guide</a>
+                  for the rest.
+                </p>
+              </details>
+              <details>
+                <summary>How do I authenticate hosted requests?</summary>
+                <p>
+                  Create an API key in the dashboard and send
+                  <code class="inline-code">Authorization: Bearer &lt;key&gt;</code>.
+                  Self-hosted deployments have no built-in auth; put them behind
+                  your own auth proxy.
+                </p>
+              </details>
+              <details>
+                <summary>What happens when I hit a rate limit or quota?</summary>
+                <p>
+                  Requests over the per-minute rate get
+                  <code class="inline-code">429</code> with a
+                  <code class="inline-code">Retry-After</code> header. When the
+                  monthly quota is used, the dashboard shows it and API calls are
+                  rejected until the next period or an upgrade.
+                </p>
+              </details>
+              <details>
+                <summary>Can my company get an invoice?</summary>
+                <p>
+                  Enter your company details at checkout, then download your subscription
+                  invoices from <strong>Manage billing</strong> in the dashboard. For purchase
+                  orders or payment terms, <a href="mailto:sales@blitzid.io?subject=BlitzID%20business%20billing">contact sales</a>.
+                </p>
+              </details>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta" aria-labelledby="cta-title">
+        <div class="container final-cta__inner">
+          <div>
+            <h2 id="cta-title">Try the BlitzID API</h2>
+            <p>POST /api/analyze → poll → JSON. Self-host or use the hosted key.</p>
+          </div>
+          <div class="actions">
+            <a class="button button--primary button--lg" href="https://github.com/malvavisc0/blitzid/blob/HEAD/docs/integration.md#run-the-stack">Run it locally</a>
+            <a class="button button--on-dark button--lg" href="/docs">Read the API reference</a>
+          </div>
+        </div>
+      </section>
+    </main>
+{% include "_footer.html" %}
+{% endblock %}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{% block title %}BlitzID{% endblock %}</title>
+    <meta
+      name="description"
+      content="{% block description %}Extract names, document numbers, and expiry dates from passports, ID cards, and driver's licenses. Get JSON and apply your own rules.{% endblock %}"
+    />
+    <meta name="theme-color" content="#101828" />
+    <link rel="canonical" href="{% block canonical %}https://blitzid.io/{% endblock %}" />
+{% block meta %}{% endblock %}
+{% block social %}
+    <meta property="og:site_name" content="BlitzID" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{{ self.title() }}" />
+    <meta property="og:description" content="{% block og_description %}{{ self.description() }}{% endblock %}" />
+    <meta property="og:url" content="{{ self.canonical() }}" />
+    <meta property="og:image" content="https://blitzid.io/static/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="BlitzID: a specimen passport's document number is shown as a JSON field." />
+    <meta name="twitter:card" content="summary_large_image" />
+{% endblock %}
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/static/app.css" />
+{% block head %}{% endblock %}
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body class="{% block body_class %}{% endblock %}">
+{% block header %}
+{% include "_header.html" %}
+{% endblock %}
+{% block body %}{% endblock %}
+  </body>
+</html>

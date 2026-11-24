@@ -1,0 +1,12 @@
+# Generated at build time.
+web.db
+ci.db
+app/static/openapi.json
+app/static/scalar.js
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

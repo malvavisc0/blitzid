@@ -43,8 +43,8 @@ over 1 MiB through temporary files before the endpoint receives them.
   to install for accelerators and nothing to fall back from. What runs
   on your laptop runs the same in a container.
 - **Ships as a service.** The same analyses come up as an HTTP job
-  queue with `docker compose up`, with a synchronous document-QC
-  endpoint in front of them.
+  queue with `docker compose up -d --no-deps api redis`, with a
+  synchronous document-QC endpoint in front of them.
 - **Typed and tested.** `py.typed`, mypy strict, and a pytest suite:
   pure-function tests run without models or network, behavioural tests
   use the committed specimen fixtures.
@@ -178,7 +178,7 @@ face/attributes/antispoof/OCR/MRZ/barcode/structured/consistency,
 synchronous `/api/crop` (document QC), `/api/verify` (1:1 face
 comparison), and `/api/liveness/...` (challenge-response liveness), and
 `/api/health` for orchestration.
-`docker compose up` runs it with all weights baked in.
+`docker compose up -d --no-deps api redis` runs it with all weights baked in.
 
 **Inputs.** File paths, NumPy arrays, and PIL Images.
 
@@ -191,16 +191,19 @@ face-verification endpoints, and a health check. Every route lives under
 deployment: the image bakes all weights for instant cold start and
 talks to a RAM-only Redis. [`docker-compose.yml`](docker-compose.yml)
 is deploy-ready for Coolify (set the `BLITZID_LLM_*` variables in the
-service environment). A step-by-step identity-onboarding guide
-lives in [`docs/integration.md`](docs/integration.md).
+service environment). The base file is production-only; local development
+uses an explicit overlay (see `web/README.md`). A step-by-step
+identity-onboarding guide lives in
+[`docs/integration.md`](docs/integration.md).
 
 ```bash
-docker compose up
+# API only: --no-deps skips the website/Postgres/migrate services.
+docker compose up -d --no-deps api redis
 curl http://localhost:8000/api/health
 ```
 
 **POST /api/analyze** submits a job (`multipart/form-data`): an `image`
-file (any OpenCV-decodable format; PDFs get a precise `415`) and
+file (any OpenCV-decodable format, or a PDF of at most 10 pages) and
 `types` (repeated and/or comma-separated: `face`, `attributes`,
 `antispoof`, `ocr`,
 `mrz`, `barcode`, `structured`, `consistency` — `attributes` predicts
@@ -213,7 +216,8 @@ and gender against the birth date and sex; the photo rows need the
 `attributes` engine and the last two the
 `BLITZID_LLM_*` config).
 Validation is eager, before the job exists: `422` unknown type or
-missing fields, `400` undecodable bytes or an analysis whose engine is
+missing fields, `400` undecodable bytes, a PDF outside the page or
+page-size bounds, or an analysis whose engine is
 unavailable (`ocr`/`mrz` when the RapidOCR engine failed to start,
 `barcode` when the zxing-cpp engine failed to start, and
 `structured`/`consistency` when the OCR or LLM engine is unavailable),
@@ -230,7 +234,9 @@ returns `200` with one section per requested type (`face`,
 `attributes`, `antispoof`, `ocr`,
 `mrz`, `barcode`, `structured`, `consistency`; a failing section carries
 `{"error": ...}` while
-the others still return). The read claims the result, so every later
+the others still return). PDF jobs return one entry per page in
+`"pages"` instead: `[{"page": 1, "<type>": <section>, ...}, ...]`.
+The read claims the result, so every later
 read gets `410 Gone`; unknown ids get `404` (an expired job reads `410` until
 twice the TTL past submission, then `404`); results expire after
 `BLITZID_API_JOB_TTL_SECONDS` (default 900).
@@ -398,10 +404,38 @@ by the upload cap times the queue and TTL windows. Knobs live in
 `ghcr.io/malvavisc0/blitzid` (amd64), gated on the full CI gate plus a
 compose smoke test. The GHCR package is public.
 
+## Website
+
+[`web/`](web/) is the public site served by its own container: the landing
+page, login preview, and a single docs page that combines the quickstart with
+an interactive API reference generated from the OpenAPI document baked into
+the image at build time. It is a FastAPI + Jinja app with Google/GitHub OAuth,
+API-key management, Stripe plans, and a usage dashboard. Self-hosting the API
+does not require it.
+
+```bash
+# set POSTGRES_PASSWORD in the untracked .env file first
+docker compose -f docker-compose.yml -f docker-compose.local.yml \
+  up -d postgres web   # http://localhost:8001
+```
+
+The local overlay selects development mode and no-charge preview billing.
+Production behind your own host proxy is the base `docker-compose.yml`
+alone; Coolify uses `docker-compose.coolify.yml`, which adds Caddy labels,
+the external `coolify` network, and no host ports. Releases also publish
+`ghcr.io/malvavisc0/blitzid-web` and can trigger Coolify; the workflow
+settings and required server variables are in [`web/README.md`](web/README.md).
+
+For local development without an image rebuild on every template edit, see
+[`web/README.md`](web/README.md).
+
 ## API reference
 
-The HTTP API does not implement API-key authentication yet; run it
-behind your own auth proxy or on a trusted network.
+Self-hosted deployments leave API-key authentication off and should run the API
+behind their own auth proxy or a trusted network boundary. Hosted deployments
+set `BLITZID_API_AUTH_REQUIRED=1` and `BLITZID_SAAS_DATABASE_URL`, which enables
+Bearer keys, plan checks, rate limits, and monthly quotas; the website's
+dashboard creates and rotates those keys.
 
 All public symbols are exported from [`blitzid`](src/blitzid/__init__.py).
 

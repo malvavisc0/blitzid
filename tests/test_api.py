@@ -803,11 +803,37 @@ class TestSubmitValidation:
             response = _submit(client, data=data)
             assert response.status_code == 400
 
-    def test_pdf_bytes_415(self) -> None:
+    def test_pdf_bytes_415_on_crop(self) -> None:
         with _client(store=MemoryJobStore()) as client:
-            response = _submit(client, data=b"%PDF-1.4 fake letter page")
+            response = client.post(
+                f"{_API}/crop",
+                files={"image": ("d.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            )
             assert response.status_code == 415
             assert "jpg/png/webp/bmp/tiff" in response.json()["detail"]
+
+    def test_corrupt_pdf_400(self) -> None:
+        with _client(store=MemoryJobStore()) as client:
+            response = _submit(client, data=b"%PDF-1.4 fake letter page")
+            assert response.status_code == 400
+
+    def test_pdf_pages_job(self, pdf_factory: Callable[..., bytes]) -> None:
+        with _client(store=MemoryJobStore(), engines=_stub_engines()) as client:
+            response = _submit(client, types="face,ocr", data=pdf_factory(2))
+            assert response.status_code == 202
+            result = _poll_done(client, response.json()["job_id"])
+            assert result["status"] == "done"
+            assert [page["page"] for page in result["pages"]] == [1, 2]
+            for page in result["pages"]:
+                assert set(page) == {"page", "face", "ocr"}
+                assert page["ocr"]["lines"][0]["text"] == "ID"
+                assert page["face"]["processing_time_ms"] >= 0
+
+    def test_pdf_too_many_pages_400(self, pdf_factory: Callable[..., bytes]) -> None:
+        with _client(store=MemoryJobStore()) as client:
+            response = _submit(client, data=pdf_factory(11))
+            assert response.status_code == 400
+            assert "limit is 10" in response.json()["detail"]
 
     def test_oversized_upload_413(self, monkeypatch: pytest.MonkeyPatch) -> None:
         big = b"\xff" * (1024 * 1024 + 1)
@@ -924,6 +950,100 @@ class TestHealth:
             response = client.get(f"{_API}/health")
             assert response.status_code == 200
             assert response.json()["status"] == "ok"
+
+
+class TestOpenAPI:
+    def test_info_tags_servers_and_auth(self) -> None:
+        with _client(store=MemoryJobStore()) as client:
+            schema = client.get("/openapi.json").json()
+        info = schema["info"]
+        assert info["title"] == "BlitzID API"
+        assert info["contact"]["email"] == "hello@blitzid.io"
+        assert info["license"]["name"] == "MIT"
+        assert "## Quickstart" in info["description"]
+        assert [server["url"] for server in schema["servers"]] == [
+            "https://api.blitzid.io",
+            "http://localhost:8000",
+        ]
+        assert [tag["name"] for tag in schema["tags"]] == [
+            "Jobs",
+            "Documents",
+            "Faces",
+            "Liveness",
+            "Health",
+        ]
+        assert schema["security"] == [{"bearerAuth": []}, {}]
+        scheme = schema["components"]["securitySchemes"]["bearerAuth"]
+        assert (scheme["type"], scheme["scheme"]) == ("http", "bearer")
+
+    def test_operations_are_tagged(self) -> None:
+        with _client(store=MemoryJobStore()) as client:
+            paths = client.get("/openapi.json").json()["paths"]
+        expected = {
+            "/api/analyze": "Jobs",
+            "/api/jobs/{job_id}": "Jobs",
+            "/api/crop": "Documents",
+            "/api/verify": "Faces",
+            "/api/liveness/challenge": "Liveness",
+            "/api/liveness/session": "Liveness",
+            "/api/health": "Health",
+        }
+        for path, tag in expected.items():
+            operations = paths[path]
+            assert [op["tags"] for op in operations.values()] == [[tag]]
+            if path != "/api/health":
+                assert [op.get("security") for op in operations.values()] == [
+                    [{"bearerAuth": []}]
+                ]
+
+    def test_job_result_is_typed_and_documented(self) -> None:
+        with _client(store=MemoryJobStore()) as client:
+            schema = client.get("/openapi.json").json()
+        operation = schema["paths"]["/api/jobs/{job_id}"]["get"]
+        assert {"200", "404", "410"} <= set(operation["responses"])
+        claimed = operation["responses"]["200"]["content"]["application/json"]
+        assert claimed["schema"]["$ref"] == "#/components/schemas/JobResponse"
+        job = schema["components"]["schemas"]["JobResponse"]
+        assert job["properties"]["status"]["enum"] == [
+            "queued",
+            "running",
+            "done",
+            "failed",
+        ]
+        for section in (
+            "face",
+            "attributes",
+            "antispoof",
+            "ocr",
+            "mrz",
+            "barcode",
+            "structured",
+            "consistency",
+            "pages",
+        ):
+            assert section in job["properties"]
+
+    def test_uploads_are_documented_and_named(self) -> None:
+        with _client(store=MemoryJobStore()) as client:
+            schema = client.get("/openapi.json").json()
+        schemas = schema["components"]["schemas"]
+        assert not [name for name in schemas if name.startswith("Body_")]
+        bodies = {
+            "/api/analyze": "AnalyzeUpload",
+            "/api/crop": "CropUpload",
+            "/api/verify": "VerifyUpload",
+            "/api/liveness/session": "LivenessFrames",
+        }
+        for path, name in bodies.items():
+            operation = next(iter(schema["paths"][path].values()))
+            ref = operation["requestBody"]["content"]["multipart/form-data"]["schema"]
+            assert ref["$ref"] == f"#/components/schemas/{name}"
+        upload = schemas["AnalyzeUpload"]
+        assert upload["properties"]["image"]["description"]
+        assert upload["properties"]["types"]["examples"] == [["ocr", "mrz"]]
+        assert {"400", "413", "422", "503"} <= set(
+            schema["paths"]["/api/analyze"]["post"]["responses"]
+        )
 
 
 class TestCrop:

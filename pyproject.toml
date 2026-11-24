@@ -1,6 +1,6 @@
 [project]
 name = "blitzid"
-version = "0.4.3"
+version = "0.5.0"
 description = "Modular DNN-based ID document reading framework (face detection, OCR, MRZ) optimized for CPU deployment"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -56,6 +56,19 @@ api = [
     "uvicorn[standard]",
     "python-multipart",
     "redis",
+    # Hosted API-key store (api/_auth.py), used only when
+    # BLITZID_API_AUTH_REQUIRED=1 and lazy-imported there. LGPL-3.0-only
+    # (linking is permitted; noted in THIRD_PARTY_NOTICES.md); actively
+    # maintained by the psycopg org; CPU-only client plus connection
+    # pool. Alternative considered: SQLAlchemy — a heavier ORM the auth
+    # path does not need (three fixed SQL statements).
+    "psycopg[binary]",
+    "psycopg-pool",
+    # PDF page rasterization for small multi-page uploads. BSD-3-Clause
+    # (pypdfium2 + PDFium); actively maintained; CPU-only rendering;
+    # lazy-imported in api/_pdf.py. Alternative considered: PyMuPDF
+    # (AGPL, incompatible with the self-hosted Enterprise image).
+    "pypdfium2",
 ]
 scripts = [
     "tqdm",
@@ -69,6 +82,7 @@ dev = [
     "pre-commit",
     "tqdm",
     "types-tqdm",
+    "pypdfium2",
     # API test deps: fastapi TestClient (httpx), the API extra's
     # request-parsing and store libraries, and a Redis double.
     "fastapi",
@@ -93,6 +107,13 @@ override-dependencies = ["opencv-python; sys_platform == 'never'"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/blitzid"]
+
+# The website is a separate application with its own lockfile, tests, static
+# assets, and local SQLite databases; it is not part of the Python package.
+# Excluding it also keeps locally ignored files (web/web.db, ci.db,
+# generated openapi.json/scalar.js) out of PyPI sdists.
+[tool.hatch.build.targets.sdist]
+exclude = ["web"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "THIRD_PARTY_NOTICES.md" = "blitzid/THIRD_PARTY_NOTICES.md"
@@ -134,14 +155,17 @@ strict = true
 [[tool.mypy.overrides]]
 # Lazy/optional imports (PIL in _image.py, rapidocr in ocr.py,
 # pydantic-ai + httpx2 in structurize.py, langfuse + opentelemetry in
-# _observability.py). rapidocr and zxing-cpp have no type stubs; PIL and
-# the observability stack are only present in some installs.
+# _observability.py, pypdfium2 in api/_pdf.py). rapidocr, zxing-cpp, and
+# pypdfium2 have no type stubs; PIL and the observability stack are only
+# present in some installs.
 module = [
     "PIL",
     "PIL.*",
     "rapidocr",
     "rapidocr.*",
     "zxingcpp",
+    "pypdfium2",
+    "pypdfium2.*",
     "pydantic_ai",
     "pydantic_ai.*",
     "httpx2",

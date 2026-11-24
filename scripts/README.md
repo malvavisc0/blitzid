@@ -72,6 +72,17 @@ and calls the LLM endpoint.
 uv run --env-file .env python scripts/api_smoke.py
 ```
 
+## `export_openapi.py` — OpenAPI schema export
+
+Writes the FastAPI-generated OpenAPI 3.1 schema to JSON. Building the
+schema does not start the app lifespan, so no Redis server and no model
+weights are needed. Feed the file to Scalar (`scalarapi/api-reference`),
+Redoc (`redocly/cli build-docs`), or an SDK generator.
+
+```bash
+uv run python scripts/export_openapi.py docs/openapi.json
+```
+
 ## `benchmark.py` — pipeline timing
 
 Times engine init and warm per-call latency for the detection presets,

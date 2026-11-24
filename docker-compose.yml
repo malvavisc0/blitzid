@@ -1,34 +1,90 @@
-# Deployment stack for Coolify and plain Docker. The image bakes every
-# engine's weights (YuNet, SFace, FairFace, MiniFASNet, RapidOCR) and
-# installs every runtime feature (face detection, face verification,
-# face attributes, face anti-spoofing, OCR, MRZ, structured
-# extraction, tracing), so cold start is instant and this file only
-# wires runtime configuration.
-#
-# Coolify: point the service at this file and set these in its
-# environment tab — BLITZID_LLM_BASE_URL, BLITZID_LLM_API_KEY,
-# BLITZID_LLM_MODEL (required by the `structured` engine; /health shows
-# it). Optional: the LANGFUSE_* trio to trace the LLM calls (spans
-# carry OCR text, so point it at infrastructure you trust) and the
-# BLITZID_API_* queue knobs below. Plain `docker compose up` reads the
-# same names from .env.
-#
-# CI sets BLITZID_IMAGE_TAG to the release tag so the smoke test runs
-# the exact image it is about to push. Released tags can skip the build
-# and run the published image instead:
-#   docker compose up --no-build
-# after `docker pull ghcr.io/malvavisc0/blitzid:latest`.
+x-web-image: &web-image
+  image: ghcr.io/malvavisc0/blitzid-web:${BLITZID_WEB_IMAGE_TAG:-${BLITZID_IMAGE_TAG:-latest}}
+  build:
+    context: .
+    dockerfile: web/Dockerfile
+    args:
+      BLITZID_WEB_VERSION: ${BLITZID_IMAGE_TAG:-${BLITZID_WEB_IMAGE_TAG:-dev}}
+
 services:
+  migrate:
+    # One-shot schema migration; web and api wait for it so neither reads
+    # a database the new schema has not reached.
+    <<: *web-image
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-blitzid}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-blitzid}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      disable: true
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    # Public site, OAuth dashboard, API keys, and billing. The build
+    # generates the OpenAPI document from the same source as the API
+    # image, so the reference matches the release.
+    <<: *web-image
+    ports:
+      # Loopback for a host-level proxy. Coolify's container proxy can
+      # reach web:8080 on the compose network; do not bind 0.0.0.0 without
+      # TLS in front.
+      - "127.0.0.1:8001:8080"
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-blitzid}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-blitzid}
+      # Signs the session cookie. Production refuses to start without it.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      # Hosted deployment: https://blitzid.io (site, login, and dashboard).
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8001}
+      REDIS_URL: redis://redis:6379/0
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_STARTER_MONTHLY: ${STRIPE_PRICE_STARTER_MONTHLY:-}
+      STRIPE_PRICE_PRO_MONTHLY: ${STRIPE_PRICE_PRO_MONTHLY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
   api:
     image: ghcr.io/malvavisc0/blitzid:${BLITZID_IMAGE_TAG:-latest}
     ports:
-      # Loopback only: the API has no authentication, so a reverse
-      # proxy (Caddy/nginx, or the Coolify proxy) must front it with
-      # TLS and rate limiting. Do not bind to 0.0.0.0.
-      - "127.0.0.1:8000:8000"
-    env_file:
-      - path: .env
-        required: false
+      # Loopback only: either front it with your own auth proxy
+      # (self-hosted) or set BLITZID_API_AUTH_REQUIRED=1 and use the
+      # hosted keys. A reverse proxy must still terminate TLS.
+      # Host port is configurable: 8000 collides with other local
+      # stacks (see docker-compose.dev.yml, which uses 17800).
+      - "127.0.0.1:${BLITZID_API_HOST_PORT:-8000}:8000"
     environment:
       BLITZID_API_REDIS_URL: redis://redis:6379/0
       BLITZID_MODELS_DIR: /models
@@ -40,12 +96,17 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
-      BLITZID_API_MAX_UPLOAD_MB: ${BLITZID_API_MAX_UPLOAD_MB:-10}
+      BLITZID_API_MAX_UPLOAD_MB: ${BLITZID_API_MAX_UPLOAD_MB:-20}
       BLITZID_API_JOB_TTL_SECONDS: ${BLITZID_API_JOB_TTL_SECONDS:-900}
-      BLITZID_API_MAX_QUEUED_JOBS: ${BLITZID_API_MAX_QUEUED_JOBS:-100}
-      BLITZID_API_MAX_CONCURRENT_JOBS: ${BLITZID_API_MAX_CONCURRENT_JOBS:-5}
+      BLITZID_API_MAX_QUEUED_JOBS: ${BLITZID_API_MAX_QUEUED_JOBS:-50}
+      BLITZID_API_MAX_CONCURRENT_JOBS: ${BLITZID_API_MAX_CONCURRENT_JOBS:-2}
       BLITZID_API_JOB_LEASE_SECONDS: ${BLITZID_API_JOB_LEASE_SECONDS:-120}
-    # Engines (~2 GB) + 5 workers + overhead; a leak dies in the
+      # Hosted key enforcement. Off by default for self-hosting; the
+      # hosted deployment sets BLITZID_API_AUTH_REQUIRED=1 and runs the
+      # web migrations against the same Postgres.
+      BLITZID_SAAS_DATABASE_URL: ${BLITZID_SAAS_DATABASE_URL:-postgresql://${POSTGRES_USER:-blitzid}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-blitzid}}
+      BLITZID_API_AUTH_REQUIRED: ${BLITZID_API_AUTH_REQUIRED:-0}
+    # Engines (~2 GB) + 2 workers + overhead; a leak dies in the
     # cgroup instead of OOMing the box.
     mem_limit: 8g
     logging:
@@ -56,6 +117,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
@@ -73,10 +136,35 @@ services:
     # weight cache across replicas, add a volume at /models and run
     #   docker compose run --rm api python scripts/download_models.py
     # once to populate it; keep the baked path otherwise.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-blitzid}
+      POSTGRES_USER: ${POSTGRES_USER:-blitzid}
+      # Real credentials come from the untracked .env file. Nothing here
+      # is exposed: Postgres publishes no host port.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - blitzid_pgdata:/var/lib/postgresql/data
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-blitzid} -d ${POSTGRES_DB:-blitzid}",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   redis:
     image: redis:8-alpine
     # Persistence off: jobs live in RAM only — nothing ever reaches disk.
-    # Hard memory cap as backpressure: 100 queued × 10 MB uploads plus
+    # Hard memory cap as backpressure: 50 queued × 20 MB uploads plus
     # running jobs stays under the cap; past it, noeviction makes new
     # writes fail, which surfaces as clean 503 + Retry-After at the API
     # instead of an OOM kill.
@@ -105,3 +193,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+volumes:
+  blitzid_pgdata:

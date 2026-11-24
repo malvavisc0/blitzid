@@ -32,8 +32,10 @@ Local installs need the `api` extra (`pip install blitzid[api]`); the
 Docker image already includes it.
 
 ```bash
-# production shape (Coolify points here too): baked weights, no mounts
-docker compose up
+# production shape (Coolify points here too): baked weights, no mounts.
+# --no-deps skips the website's postgres/migrate services; the open-source
+# API does not use them while BLITZID_API_AUTH_REQUIRED=0.
+docker compose up -d --no-deps api redis
 
 # local iteration: hot code, --reload on edits under ./src
 docker compose -f docker-compose.dev.yml up
@@ -43,10 +45,14 @@ curl http://localhost:8000/api/health
 
 The image carries every engine's weights, so cold start needs no
 downloads and the container runs as a non-root user against a RAM-only
-Redis. The HTTP API has no built-in API-key authentication yet; put it
-behind your own auth proxy or a trusted network boundary. In Coolify,
+Redis. The open-source API ships with API-key authentication disabled; put it behind
+your own auth proxy or a trusted network boundary. Hosted deployments enable
+`BLITZID_API_AUTH_REQUIRED=1` with the Postgres key store, then require
+`Authorization: Bearer <key>` on every route except `/api/health`. In Coolify,
 point the service at `docker-compose.yml` and set the variables below in
-its environment tab.
+its environment tab. Hosted deployments also need the website stack
+(`docker compose up -d`) so `migrate`, `postgres`, and the web key store are
+available; see [`../web/README.md`](../web/README.md) for those variables.
 
 ### Configure it
 

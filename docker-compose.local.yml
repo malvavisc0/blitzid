@@ -1,0 +1,14 @@
+# Local-only overlay. It is not auto-loaded: run it explicitly with
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# It builds the API image from this repo and opts the website into
+# development mode, including local no-charge billing.
+# The api host port comes from BLITZID_API_HOST_PORT in .env.
+services:
+  web:
+    environment:
+      ENVIRONMENT: development
+      BLITZID_WEB_LOCAL_BILLING: "1"
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile

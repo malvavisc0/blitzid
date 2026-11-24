@@ -2,7 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-24
+
+### Added
+
+- `/api/analyze` accepts PDFs of at most 10 pages (size-capped like
+  images). Pages are rasterized at 200 DPI in the worker and analyzed
+  through the same per-image path; PDF job results report one entry per
+  page under `"pages"`. Image uploads and the image-only endpoints are
+  unchanged; `/api/crop` still answers `415` for PDFs. Requires the
+  `api` extra's new `pypdfium2` dependency (BSD-3-Clause).
+- Hosted API-key authentication for the HTTP API, off by default.
+  `BLITZID_API_AUTH_REQUIRED=1` plus `BLITZID_SAAS_DATABASE_URL` require
+  `Authorization: Bearer <key>` on every route except `/api/health`, and
+  enforce plan entitlement, per-minute rate limits, and monthly quotas
+  (new `psycopg`/`psycopg-pool` dependencies in the `api` extra,
+  LGPL-3.0-only). Self-hosted deployments are unchanged.
+- OpenAPI documentation for every route: operation tags, summaries,
+  per-status responses, typed job results (`JobResponse` and the
+  analysis-section models), and a bearer-auth security scheme.
+  `scripts/export_openapi.py` writes the schema as JSON for SDK
+  generators and doc tooling.
+- [`web/`](web/): public site and hosted dashboard (landing page, OAuth
+  sign-in, API keys, Stripe plans, usage), served by its own container
+  and backed by the new `postgres` compose service. It bakes the API's
+  OpenAPI document at image build time for an interactive reference.
+- Hosted dashboard plan changes and cancellation. **Change plan** opens
+  Stripe's subscription-update confirmation for the existing subscription;
+  **Cancel plan** opens Stripe's cancellation flow (immediate in local
+  preview). Webhooks sync `cancel_at`, and the API and dashboard both stop
+  entitlement once the scheduled end passes.
+- The release workflow publishes `ghcr.io/malvavisc0/blitzid-web` and can
+  trigger an optional Coolify deployment after the images are pushed
+  (`COOLIFY_DEPLOY_ENABLED`, `COOLIFY_WEBHOOK`, `COOLIFY_TOKEN`).
+- `docker-compose.coolify.yml` provides a pull-only Coolify stack with Caddy
+  domain labels, no host ports, and memory caps sized for an 8 vCPU / 16 GB
+  server.
+
+### Changed
+
+- The API docs page renders Scalar without the site header. The site
+  header is ink like the footer and links to the GitHub repository on
+  every page except sign-in and docs; the pricing and FAQs links show
+  only to signed-out visitors.
+- `web/` redesigned around the document artifact: storm-blue ink with
+  lightning-yellow accents, the bundled JetBrains Mono for all text, a
+  specimen-passport result demo, an extraction ledger, and a
+  three-call job timeline. Dashboard, billing, key-created, login, legal,
+  and error pages share one header and footer.
+- Hosted billing defaults to production in the base compose stack. Local
+  development opts in explicitly with
+  `docker compose -f docker-compose.yml -f docker-compose.local.yml`, which
+  sets `development` plus `BLITZID_WEB_LOCAL_BILLING=1` for no-charge
+  preview plans. A one-shot `migrate` service applies web migrations before
+  the API and web start.
+- The API container receives only the API variables from the compose
+  environment; it no longer inherits the website's Postgres, session,
+  OAuth, and billing secrets.
+
+### Fixed
+
+- OpenAPI description and license links pointed at `blob/main`, which
+  does not exist on a `master`-only repository; they now use `blob/HEAD`
+  like the rest of the site. Description text uses US spelling
+  ("Analyze", "Randomized").
+- PyPI sdists no longer include the separate `web/` application, its
+  generated assets, or local SQLite databases; the publish workflow rejects
+  an sdist that contains them.
 
 ## [0.4.3] - 2026-11-20
 
@@ -466,7 +532,7 @@ All notable changes to this project will be documented in this file.
   `get_bbox_inside_image`).
 - `FaceDetectorDNN.backend_type` compat alias (superseded by `backend`).
 
-[Unreleased]: https://github.com/malvavisc0/blitzid/compare/v0.4.3...HEAD
+[0.5.0]: https://github.com/malvavisc0/blitzid/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/malvavisc0/blitzid/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/malvavisc0/blitzid/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/malvavisc0/blitzid/compare/v0.4.0...v0.4.1

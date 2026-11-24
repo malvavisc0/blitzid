@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}BlitzID API docs{% endblock %}
+{% block description %}BlitzID API documentation: quickstart, authentication, errors, and the interactive reference generated from the deployed OpenAPI schema.{% endblock %}
+{% block canonical %}https://blitzid.io/docs{% endblock %}
+{% block og_description %}Quickstart, authentication, errors, and the interactive API reference.{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block body %}
+    <main id="main" aria-label="API documentation" tabindex="-1">
+      <div id="api-reference-root"></div>
+      <noscript>
+        <p class="container docs-noscript">
+          The docs need JavaScript. Download
+          <a href="/openapi.json">openapi.json</a> instead.
+        </p>
+      </noscript>
+    </main>
+
+    <script src="/static/scalar.js"></script>
+    <script>
+      (() => {
+        const target = document.getElementById("api-reference-root");
+        if (!target) return;
+        if (!window.Scalar) {
+          target.innerHTML =
+            '<p class="container docs-noscript">The docs bundle is not built yet. Run the web build or download <a href="/openapi.json">openapi.json</a>.</p>';
+          return;
+        }
+        window.Scalar.createApiReference("#api-reference-root", {
+          url: "/openapi.json",
+          theme: "default",
+          showDeveloperTools: "never",
+          withDefaultFonts: false,
+          hideDarkModeToggle: true,
+          agent: { disabled: true },
+          metaData: { title: "BlitzID API docs" },
+          customCss: `
+            :root {
+              --scalar-font: var(--font-body);
+              --scalar-font-code: var(--font-mono);
+            }
+            .light-mode {
+              --scalar-color-1: var(--ink);
+              --scalar-color-2: var(--muted);
+              --scalar-color-accent: var(--accent);
+              --scalar-background-1: var(--surface);
+              --scalar-background-2: var(--paper);
+              --scalar-background-accent: var(--accent-soft);
+              --scalar-border-color: var(--border);
+              --scalar-sidebar-background-1: var(--paper);
+            }
+            .dark-mode {
+              --scalar-color-1: var(--paper);
+              --scalar-color-2: var(--muted-dark);
+              --scalar-color-accent: var(--flash);
+              --scalar-background-1: var(--ink);
+              --scalar-background-2: var(--ink-2);
+              --scalar-background-accent: color-mix(in srgb, var(--flash) 12%, transparent);
+              --scalar-border-color: var(--border-dark);
+              --scalar-sidebar-background-1: var(--ink-2);
+            }
+            .dark-mode :focus-visible {
+              outline-color: var(--flash);
+            }
+            .references-rendered pre {
+              font-size: 13px;
+            }
+            .introduction-description pre code {
+              white-space: pre-wrap !important;
+            }
+          `,
+        });
+      })();
+    </script>
+{% endblock %}

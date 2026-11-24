@@ -1,0 +1,66 @@
+[project]
+name = "blitzid-web"
+version = "0.1.0"
+description = "BlitzID public website: landing, login, docs, and API reference."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+# Server-side web dependencies, all CPU-light and used by the separate web
+# image only. Licenses: MIT for alembic, fastapi, redis, sqlalchemy, stripe,
+# and uvicorn; BSD-3-Clause for authlib, httpx, itsdangerous, and jinja2;
+# Apache-2.0 for python-multipart; LGPL-3.0-only for psycopg (dynamic linking,
+# already used by the API extra). FastAPI matches the API service; Flask was
+# rejected for the missing async/typing stack and Django for its footprint.
+dependencies = [
+    "alembic>=1.16",
+    "authlib>=1.6",
+    "fastapi>=0.165",
+    "httpx>=0.28",
+    "itsdangerous>=2.2",
+    "jinja2>=3.1",
+    "psycopg[binary]>=3.2",
+    "python-multipart>=0.0.20",
+    "redis>=5.0",
+    "sqlalchemy>=2.0",
+    "stripe>=12.0",
+    "uvicorn[standard]>=0.54",
+]
+
+[dependency-groups]
+dev = [
+    "fakeredis>=2.31",
+    "httpx>=0.28",
+    "mypy>=1.18",
+    "pytest>=8.4",
+    "ruff>=0.14",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

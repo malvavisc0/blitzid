@@ -27,5 +27,12 @@ jobs:
       - name: Build sdist and wheel
         run: uv build
 
+      - name: Reject local data in the sdist
+        run: |
+          if tar -tzf dist/*.tar.gz | grep -Eq '(^|/)\.env$|(^|/)web/'; then
+            echo "sdist contains local or website files" >&2
+            exit 1
+          fi
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

@@ -58,3 +58,9 @@ models/**
 
 results/*
 data/*
+
+# Website local state and generated assets (also excluded from sdists)
+web/web.db
+web/ci.db
+web/app/static/openapi.json
+web/app/static/scalar.js

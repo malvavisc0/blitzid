@@ -2,8 +2,8 @@
 # Builds the GHCR image and smoke-tests the compose stack. The
 # compose file binds the API to 127.0.0.1 only (the service has no
 # authentication), so every smoke-test curl targets 127.0.0.1 from
-# the same runner. queue-default mem/queue knobs are tuned for the
-# production box (6 vCPU / 12 GB) — see docs/vps-recommendations.md.
+# the same runner. The base compose file is used directly; the local
+# development overlay is never loaded here.
 name: Docker
 
 on:
@@ -30,20 +30,30 @@ jobs:
             -t ghcr.io/malvavisc0/blitzid:$GITHUB_REF_NAME \
             -t ghcr.io/malvavisc0/blitzid:latest .
 
+      - name: Build web image (amd64)
+        # The web build exports the API's OpenAPI document from this same
+        # checkout, then bakes it into the site image.
+        run: |
+          docker build \
+            --build-arg BLITZID_WEB_VERSION="${GITHUB_REF_NAME#v}" \
+            -t ghcr.io/malvavisc0/blitzid-web:$GITHUB_REF_NAME \
+            -t ghcr.io/malvavisc0/blitzid-web:latest \
+            -f web/Dockerfile .
+
       - name: Smoke test (compose up, health, analyze, crop)
         # The compose file binds the API to 127.0.0.1 only (no auth),
         # which works here: this runner built the image and reaches it
         # over the loopback binding. redis needs no pull — it is public.
         env:
           BLITZID_IMAGE_TAG: ${{ github.ref_name }}
-          BLITZID_LLM_BASE_URL: ${{ vars.BLITZID_LLM_BASE_URL || '' }}
-          BLITZID_LLM_API_KEY: ${{ vars.BLITZID_LLM_API_KEY || '' }}
-          BLITZID_LLM_MODEL: ${{ vars.BLITZID_LLM_MODEL || '' }}
+          # Throwaway credentials for this runner's loopback-only stack.
+          POSTGRES_PASSWORD: ci-smoke-only-not-a-secret
+          SESSION_SECRET: ci-smoke-only-not-a-secret
         run: |
-          trap 'docker compose down -v' EXIT
-          docker compose up -d --no-build --wait
+          trap 'docker compose -f docker-compose.yml down -v' EXIT
+          docker compose -f docker-compose.yml up -d --no-build --wait
           BUILT=$(docker image inspect -f '{{.Id}}' ghcr.io/malvavisc0/blitzid:$GITHUB_REF_NAME)
-          RUNNING=$(docker compose images -q api)
+          RUNNING=$(docker compose -f docker-compose.yml images -q api)
           echo "built:   $BUILT"
           echo "running: $RUNNING"
           test "${RUNNING#sha256:}" = "${BUILT#sha256:}"
@@ -79,6 +89,15 @@ jobs:
             | jq -e '.face_found == true and
               (.crop_base64 | type == "string" and length > 0) and
               (.quad | length == 4)' > /dev/null
+          # Website checks run before the EXIT trap tears this stack down.
+          curl -fsS http://127.0.0.1:8001/healthz \
+            | jq -e --arg version "${GITHUB_REF_NAME#v}" \
+              '.status == "ok" and .service == "web" and .version == $version'
+          curl -fsS http://127.0.0.1:8001/ | grep -q "You keep the rules"
+          curl -fsS http://127.0.0.1:8001/docs | grep -q "/static/scalar.js"
+          curl -fsS http://127.0.0.1:8001/openapi.json \
+            | jq -e --arg version "${GITHUB_REF_NAME#v}" \
+              '.info.version == $version and (.info.description | contains("Quickstart"))'
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -91,3 +110,50 @@ jobs:
         run: |
           docker push ghcr.io/malvavisc0/blitzid:$GITHUB_REF_NAME
           docker push ghcr.io/malvavisc0/blitzid:latest
+          docker push ghcr.io/malvavisc0/blitzid-web:$GITHUB_REF_NAME
+          docker push ghcr.io/malvavisc0/blitzid-web:latest
+
+  deploy:
+    # Opt in with repository variable COOLIFY_DEPLOY_ENABLED=true and the
+    # secrets COOLIFY_WEBHOOK (full deploy hook URL) and COOLIFY_TOKEN.
+    # Set PUBLIC_WEB_URL if the site is not https://blitzid.io.
+    needs: release
+    if: ${{ vars.COOLIFY_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Trigger Coolify
+        env:
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          test -n "$COOLIFY_WEBHOOK"
+          test -n "$COOLIFY_TOKEN"
+          for _ in 1 2 3; do
+            if curl --fail --silent --show-error \
+              -X POST "$COOLIFY_WEBHOOK" \
+              -H "Authorization: Bearer $COOLIFY_TOKEN"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Coolify deploy hook failed" >&2
+          exit 1
+      - name: Wait for the public site
+        env:
+          PUBLIC_WEB_URL: ${{ vars.PUBLIC_WEB_URL || 'https://blitzid.io' }}
+        run: |
+          BASE="${PUBLIC_WEB_URL%/}"
+          for _ in $(seq 1 30); do
+            if curl -fsS "$BASE/healthz" | jq -e '.status == "ok"' >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "site did not become healthy" >&2
+          exit 1

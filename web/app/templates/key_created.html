@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}{% if rotated %}Key rotated{% else %}API key created{% endif %} | BlitzID{% endblock %}
+{% block description %}Store your new BlitzID API key.{% endblock %}
+{% block canonical %}https://blitzid.io/dashboard{% endblock %}
+{% block meta %}    <meta name="robots" content="noindex" />
+{% endblock %}
+{% block social %}{% endblock %}
+
+{% block body_class %}app-page{% endblock %}
+
+{% block body %}
+
+    <main id="main" class="app-main">
+      <div class="container">
+        <div class="app-heading">
+          <p class="app-kicker">API keys</p>
+          <h1>{% if rotated %}Key rotated{% else %}Key created{% endif %}</h1>
+        </div>
+
+        <section class="app-panel" aria-labelledby="new-key-title">
+          <h2 id="new-key-title">{{ created_name }} — shown once</h2>
+          <p class="app-note">
+            Store this key now. It will not be shown again, and it cannot be
+            recovered from the dashboard.
+          </p>
+          <div class="key-display">
+            <pre class="key-value" id="new-key">{{ plaintext }}</pre>
+            <button class="button button--secondary" type="button" data-copy="new-key" hidden>Copy key</button>
+          </div>
+          {% if rotated %}
+          <p class="app-note">The previous key keeps working for 24 hours, then expires.</p>
+          {% endif %}
+          <p class="app-note">
+            Use it as <code class="inline-code">Authorization: Bearer &lt;key&gt;</code>.
+            See the <a href="/docs">API docs</a>.
+          </p>
+          <div class="row-actions app-panel__actions">
+            <a class="button button--primary" href="/dashboard">Back to dashboard</a>
+          </div>
+        </section>
+      </div>
+    </main>
+{% endblock %}

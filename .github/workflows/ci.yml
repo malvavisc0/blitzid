@@ -31,3 +31,36 @@ jobs:
       # dependencies and always installed.
       - run: uv sync --extra dev
       - run: uv run pytest tests/ -v
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --frozen
+      - run: uv run ruff check app tests
+      - run: uv run ruff format --check app tests
+      - run: uv run mypy app
+      - run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: sqlite+pysqlite:///./ci.db
+      - run: uv run alembic check
+        env:
+          DATABASE_URL: sqlite+pysqlite:///./ci.db
+      - run: uv run pytest
+
+  web-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Validate the production compose file
+        env:
+          POSTGRES_PASSWORD: ci-only
+          SESSION_SECRET: ci-only
+        run: docker compose -f docker-compose.yml config --quiet
+      - name: Build the website image
+        run: docker build -f web/Dockerfile -t blitzid-web:ci .

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ status }} — Page not found | BlitzID{% endblock %}
+{% block description %}{{ message }}{% endblock %}
+{% block canonical %}https://blitzid.io/{% endblock %}
+{% block meta %}    <meta name="robots" content="noindex" />
+{% endblock %}
+{% block social %}{% endblock %}
+
+{% block body_class %}error-page{% endblock %}
+
+{% block body %}
+
+    <main id="main">
+      <section class="section error-hero">
+        <div class="container">
+          <p class="error-hero__code">{{ status }}</p>
+          <h1>{{ message }}</h1>
+          <p class="lead">
+            The page moved, never existed, or the link is out of date. The API
+            is still one request away.
+          </p>
+          <div class="actions">
+            <a class="button button--primary" href="/">Back to the site</a>
+            <a class="button button--secondary" href="/docs">Read the docs</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+{% include "_footer.html" %}
+{% endblock %}

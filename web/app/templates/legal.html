@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} | BlitzID{% endblock %}
+{% block description %}{{ title }} for BlitzID.{% endblock %}
+{% block canonical %}https://blitzid.io/{{ page }}{% endblock %}
+{% block meta %}    <meta name="robots" content="noindex" />
+{% endblock %}
+{% block social %}{% endblock %}
+
+{% block body_class %}legal-page{% endblock %}
+
+{% block body %}
+
+    <main id="main">
+      <section class="section legal-page__body">
+        <div class="container legal-copy">
+          <h1>{{ title }}</h1>
+          <p class="lead">
+            This page is being finalized. It will describe what BlitzID stores,
+            how long it is kept, and how to exercise your data rights.
+          </p>
+          <p>
+            Until then, write to
+            <a href="mailto:hello@blitzid.io">hello@blitzid.io</a> with any
+            question about data handling, retention, or deletion. For
+            self-hosted deployments, the
+            <a
+              href="https://github.com/malvavisc0/blitzid/blob/HEAD/docs/integration.md#data-and-privacy"
+              rel="noreferrer"
+              >integration guide</a
+            >
+            describes what the API stores and what stays in memory.
+          </p>
+          <p class="legal-copy__meta">Last updated: 24 November 2026</p>
+        </div>
+      </section>
+    </main>
+
+{% include "_footer.html" %}
+{% endblock %}

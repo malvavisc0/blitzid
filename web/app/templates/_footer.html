@@ -1,0 +1,30 @@
+{% from "_brand.html" import brand %}
+<footer class="site-footer">
+      <div class="container footer-top">
+        {{ brand() }}
+        <p class="footer-host">blitzid.io</p>
+      </div>
+      <div class="container footer-grid">
+        <nav aria-label="Product">
+          <h3>Product</h3>
+          <a href="/#outputs">API</a>
+          <a href="/docs">Docs</a>
+          <a href="/#pricing">Pricing</a>
+          <a href="/#data-handling">Security</a>
+        </nav>
+        <nav aria-label="Developers">
+          <h3>Developers</h3>
+          <a href="https://github.com/malvavisc0/blitzid" rel="noreferrer">GitHub</a>
+          <a href="https://pypi.org/project/blitzid/" rel="noreferrer">Python package</a>
+          <a href="https://github.com/malvavisc0/blitzid/blob/HEAD/CHANGELOG.md">Changelog</a>
+        </nav>
+        <nav aria-label="Legal">
+          <h3>Legal</h3>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+        </nav>
+      </div>
+      <div class="container footer-bottom">
+        <p>© <span data-year>2026</span> BlitzID. All rights reserved.</p>
+      </div>
+    </footer>

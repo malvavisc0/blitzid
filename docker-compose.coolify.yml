@@ -1,0 +1,217 @@
+# BlitzID — Coolify deployment (pull-only, no build).
+#
+# Use this file in Coolify instead of docker-compose.yml: Coolify's
+# Caddy Docker Proxy reaches the containers over the external `coolify`
+# network, so nothing binds host ports and both services carry caddy_*
+# labels for their domains.
+#
+# Coolify setup:
+#   1. New Application -> Docker Compose (build pack), this repo,
+#      Compose file: docker-compose.coolify.yml
+#   2. Enable "Raw Compose deployment" so Coolify runs the file verbatim
+#      (otherwise it rewrites services and can drop the labels/networks).
+#   3. Set the variables marked ":?" in the Environment tab. Set
+#      BLITZID_IMAGE_TAG to the release tag (e.g. v0.5.0); the web image
+#      defaults to the same tag.
+#   4. Make both GHCR packages public or run `docker login ghcr.io` on
+#      the server; package pulls otherwise fail with 401.
+#   5. Keep Auto Deploy off if the CI Coolify hook is enabled, otherwise
+#      every merge deploys twice and can race the image build.
+#
+# Wire DNS for both domains to the Coolify server and keep 80/443 open;
+# Coolify's proxy handles TLS.
+#
+# Resource budget for 8 vCPU / 16 GB: api 8g, redis 2.5g, postgres 2g,
+# web 768m. Add swap (4-8 GB) on a 16 GB box without swap so model
+# loading has headroom.
+
+name: blitzid
+
+x-web-image: &web-image
+  image: ghcr.io/malvavisc0/blitzid-web:${BLITZID_WEB_IMAGE_TAG:-${BLITZID_IMAGE_TAG:-latest}}
+
+services:
+  migrate:
+    # One-shot schema migration; web and api wait for it.
+    <<: *web-image
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-blitzid}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Coolify Environment}@postgres:5432/${POSTGRES_DB:-blitzid}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      disable: true
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    <<: *web-image
+    expose:
+      - "8080"
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-blitzid}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Coolify Environment}@postgres:5432/${POSTGRES_DB:-blitzid}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in Coolify Environment (openssl rand -hex 32)}
+      APP_BASE_URL: ${APP_BASE_URL:?Set APP_BASE_URL in Coolify Environment (e.g. https://blitzid.io)}
+      BLITZID_WEB_VERSION: ${BLITZID_WEB_VERSION:-${BLITZID_IMAGE_TAG:-0.0.0}}
+      REDIS_URL: redis://redis:6379/0
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_STARTER_MONTHLY: ${STRIPE_PRICE_STARTER_MONTHLY:-}
+      STRIPE_PRICE_PRO_MONTHLY: ${STRIPE_PRICE_PRO_MONTHLY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - coolify
+    labels:
+      caddy_ingress_network: coolify
+      caddy_0: ${BLITZID_WEB_DOMAIN:?Set BLITZID_WEB_DOMAIN in Coolify Environment (e.g. https://blitzid.io)}
+      caddy_0.header: -Server
+      caddy_0.reverse_proxy: "{{upstreams 8080}}"
+    mem_limit: 768m
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  api:
+    image: ghcr.io/malvavisc0/blitzid:${BLITZID_IMAGE_TAG:-latest}
+    expose:
+      - "8000"
+    environment:
+      BLITZID_API_REDIS_URL: redis://redis:6379/0
+      BLITZID_MODELS_DIR: /models
+      # Structured/consistency stay off when these are empty; /api/health
+      # reports which engines are available.
+      BLITZID_LLM_BASE_URL: ${BLITZID_LLM_BASE_URL:-}
+      BLITZID_LLM_API_KEY: ${BLITZID_LLM_API_KEY:-}
+      BLITZID_LLM_MODEL: ${BLITZID_LLM_MODEL:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+      BLITZID_API_MAX_UPLOAD_MB: ${BLITZID_API_MAX_UPLOAD_MB:-20}
+      BLITZID_API_JOB_TTL_SECONDS: ${BLITZID_API_JOB_TTL_SECONDS:-900}
+      BLITZID_API_MAX_QUEUED_JOBS: ${BLITZID_API_MAX_QUEUED_JOBS:-50}
+      BLITZID_API_MAX_CONCURRENT_JOBS: ${BLITZID_API_MAX_CONCURRENT_JOBS:-4}
+      BLITZID_API_JOB_LEASE_SECONDS: ${BLITZID_API_JOB_LEASE_SECONDS:-120}
+      BLITZID_SAAS_DATABASE_URL: ${BLITZID_SAAS_DATABASE_URL:-postgresql://${POSTGRES_USER:-blitzid}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Coolify Environment}@postgres:5432/${POSTGRES_DB:-blitzid}}
+      # Hosted deployment: site keys are enforced against the shared
+      # Postgres. Set 0 only for an intentionally open API.
+      BLITZID_API_AUTH_REQUIRED: ${BLITZID_API_AUTH_REQUIRED:-1}
+      BLITZID_BUILD_REVISION: ${BLITZID_BUILD_REVISION:-}
+    mem_limit: 8g
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - coolify
+    labels:
+      caddy_ingress_network: coolify
+      caddy_0: ${BLITZID_API_DOMAIN:?Set BLITZID_API_DOMAIN in Coolify Environment (e.g. https://api.blitzid.io)}
+      caddy_0.header: -Server
+      caddy_0.reverse_proxy: "{{upstreams 8000}}"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-blitzid}
+      POSTGRES_USER: ${POSTGRES_USER:-blitzid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Coolify Environment}
+    volumes:
+      - blitzid_pgdata:/var/lib/postgresql/data
+    mem_limit: 2g
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-blitzid} -d ${POSTGRES_DB:-blitzid}",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:8-alpine
+    command:
+      [
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--maxmemory",
+        "2gb",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    mem_limit: 2.5g
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  coolify:
+    name: coolify
+    external: true
+
+volumes:
+  blitzid_pgdata:

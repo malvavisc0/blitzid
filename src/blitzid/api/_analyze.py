@@ -18,6 +18,7 @@ from typing import Any, cast
 import numpy as np
 
 from blitzid._image import crop_with_padding
+from blitzid.api._pdf import is_pdf_bytes, iter_pdf_pages
 from blitzid.api._upload import decode_image_bytes, dims_within_bounds, encode_jpeg_b64
 from blitzid.exceptions import BlitzIDError, ModelError, MRZError
 from blitzid.face._antispoof import AntiSpoofReader
@@ -78,16 +79,43 @@ def run_job(image: bytes, types: list[str], engines: Engines) -> dict[str, Any]:
     Per-section failures (``BlitzIDError`` subclasses) are captured as
     section errors; other sections still return. A per-job memo shares
     detection, OCR, and LLM results between sections that need them.
+    PDF bytes are rasterized per page and each page runs through the
+    same path.
 
     Returns:
-        ``{"state": "done", "<type>": <section>, ...}`` — duplicates
-        deduped, one section per requested type.
+        For image bytes, ``{"state": "done", "<type>": <section>, ...}``;
+        for PDF bytes, ``{"state": "done", "pages": [{"page": n,
+        "<type>": <section>, ...}, ...]}``. Duplicates deduped, one
+        section per requested type per image or page.
     """
+    if is_pdf_bytes(image):
+        return _run_pdf_job(image, types, engines)
     img = decode_image_bytes(image)
     if img is None or not dims_within_bounds(img):
         return {"state": "failed", "error": "stored image bytes failed validation"}
-    sections: dict[str, Any] = {"state": "done"}
+    return {"state": "done", **_run_sections(img, types, engines)}
+
+
+def _run_pdf_job(image: bytes, types: list[str], engines: Engines) -> dict[str, Any]:
+    """Rasterize a PDF page-by-page and release each page after analysis."""
+    pages = iter_pdf_pages(image)
+    result: list[dict[str, Any]] = []
+    try:
+        for number, page in enumerate(pages, start=1):
+            result.append({"page": number, **_run_sections(page, types, engines)})
+    except BlitzIDError as e:
+        return {"state": "failed", "error": str(e)}
+    finally:
+        pages.close()
+    return {"state": "done", "pages": result}
+
+
+def _run_sections(
+    img: np.ndarray, types: list[str], engines: Engines
+) -> dict[str, Any]:
+    """Build one image's sections, one entry per requested type."""
     memo: dict[str, Any] = {}
+    sections: dict[str, Any] = {}
     for analysis_type in dict.fromkeys(types):
         sections[analysis_type] = _run_section(analysis_type, img, engines, memo)
     return sections

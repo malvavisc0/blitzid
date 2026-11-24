@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -72,3 +73,21 @@ def smoke_module() -> Callable[[str], ModuleType]:
         return module
 
     return load
+
+
+@pytest.fixture
+def pdf_factory() -> Callable[..., bytes]:
+    """Factory for synthetic blank PDFs (no text, no PII)."""
+
+    def make(n_pages: int = 1, width: float = 200.0, height: float = 100.0) -> bytes:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument.new()
+        for _ in range(n_pages):
+            document.new_page(width, height)
+        buffer = io.BytesIO()
+        document.save(buffer)
+        document.close()
+        return buffer.getvalue()
+
+    return make

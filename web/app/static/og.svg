@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">BlitzID: ID documents to JSON</title>
+  <desc id="description">A specimen passport's document number is shown as a JSON field.</desc>
+  <style>
+    .display { font-family: "DejaVu Sans", sans-serif; font-weight: 700; }
+    .mono { font-family: "DejaVu Sans Mono", monospace; }
+  </style>
+  <defs>
+    <radialGradient id="storm" cx="62%" cy="18%" r="78%">
+      <stop stop-color="#253a5a" />
+      <stop offset="1" stop-color="#101828" />
+    </radialGradient>
+    <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M0 60V0H60" fill="none" stroke="#aab8cd" stroke-opacity=".09" />
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#storm)" />
+  <rect width="1200" height="630" fill="url(#grid)" />
+  <path d="M76 128V76h52m944 0h52v52M76 502v52h52m944 0h52v-52" fill="none" stroke="#aab8cd" stroke-opacity=".24" stroke-width="2" />
+
+  <g transform="translate(484 82)">
+    <rect width="46" height="46" rx="12" fill="#101828" stroke="#aab8cd" stroke-opacity=".35" />
+    <g transform="scale(1.4375)">
+      <path d="M19 4 9 17h6l-2 11 10-13h-6l2-11Z" fill="#f2ff55" />
+      <path d="M7 11V7h4m14 14v4h-4" fill="none" stroke="#f3f6fb" stroke-width="1.5" />
+    </g>
+    <text x="60" y="40" class="display" font-size="48" letter-spacing="-1.15" fill="#f3f6fb">Blitz<tspan fill="#f2ff55">ID</tspan></text>
+  </g>
+  <text x="600" y="233" class="display" text-anchor="middle" font-size="50" letter-spacing="-1.5" fill="#f3f6fb">ID documents <tspan fill="#f2ff55">&#8594; JSON</tspan></text>
+
+  <g transform="translate(315 288)">
+    <rect width="220" height="190" rx="14" fill="#f3f6fb" />
+    <rect x="18" y="24" width="43" height="51" rx="5" fill="#dce3ed" />
+    <circle cx="39.5" cy="42" r="8" fill="#5b677a" />
+    <path d="M25 65a14.5 12 0 0 1 29 0Z" fill="#5b677a" />
+    <text x="75" y="45" class="display" font-size="24" fill="#101828">Passport</text>
+    <text x="76" y="69" class="mono" font-size="16" fill="#374db8">SPECIMEN</text>
+    <path d="M18 89h184" stroke="#c1ccdc" />
+    <rect x="18" y="100" width="184" height="51" rx="5" fill="#19776e" fill-opacity=".1" />
+    <path d="M19 115v-14h14m168 34v15h-14" fill="none" stroke="#19776e" stroke-width="2.5" />
+    <text x="110" y="136" class="mono" text-anchor="middle" font-size="29" fill="#19776e">L898902C3</text>
+    <path d="M18 170h184" stroke="#5b677a" stroke-width="4" stroke-dasharray="6 3 2 3" opacity=".5" />
+  </g>
+
+  <path d="M551 414h43m-11-11 11 11-11 11" fill="none" stroke="#f2ff55" stroke-width="4" />
+
+  <g transform="translate(610 288)">
+    <rect width="275" height="190" rx="14" fill="#172338" stroke="#aab8cd" stroke-opacity=".28" stroke-width="2" />
+    <text x="18" y="38" class="mono" font-size="21" fill="#aab8cd">{</text>
+    <text x="34" y="77" class="mono" font-size="20" fill="#c3cff1">"document_number":</text>
+    <rect x="17" y="100" width="241" height="51" rx="5" fill="#56d2be" fill-opacity=".14" />
+    <text x="137.5" y="136" class="mono" text-anchor="middle" font-size="29" fill="#56d2be">"L898902C3"</text>
+    <text x="18" y="174" class="mono" font-size="21" fill="#aab8cd">}</text>
+  </g>
+  <text x="600" y="550" class="mono" text-anchor="middle" font-size="22" letter-spacing="2" fill="#aab8cd">HOSTED OR SELF-HOSTED</text>
+</svg>
